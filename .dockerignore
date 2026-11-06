@@ -1,0 +1,8 @@
+node_modules
+.next
+data
+test/.tmp
+docs/shots
+.git
+.env
+.env.local

@@ -24,7 +24,7 @@ test('no em dashes, emojis or banned words anywhere in the source', () => {
     if (/\p{Extended_Pictographic}/u.test(s.replace(/[←-⇿✓✕]/g, ''))) bad.push(`${f}: emoji`);
     if (f.startsWith('app') || f.startsWith('components')) {
       if (/\bdemo\b/i.test(s)) bad.push(`${f}: the word demo`);
-      if (/github/i.test(s)) bad.push(`${f}: GitHub`);
+      if (/github/i.test(s) && !['components/Header.tsx', 'components/Icons.tsx'].includes(f)) bad.push(`${f}: GitHub outside the header link`);
     }
   }
   assert.deepEqual(bad, []);

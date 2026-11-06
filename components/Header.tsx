@@ -3,7 +3,10 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { Logo } from './Logo';
-import { IconArrow, IconClose, IconMenu, IconMoon, IconSun, IconX } from './Icons';
+import { IconArrow, IconClose, IconGithub, IconMenu, IconMoon, IconSun, IconX } from './Icons';
+
+/** Where Fabrica's source lives. */
+export const REPO_URL = 'https://github.com/FabricaAgents/fabrica';
 
 const NAV = [
   { href: '/agents', label: 'Agents' },
@@ -63,6 +66,9 @@ export function Header({ xUrl }: { xUrl: string | null }) {
                 <IconX />
               </a>
             ) : null}
+            <a className="icon-btn" href={REPO_URL} target="_blank" rel="noopener noreferrer" aria-label="Fabrica source code">
+              <IconGithub />
+            </a>
             <ThemeToggle />
             <Link className="btn btn--primary btn--sm hide-sm" href="/build">
               Build an agent

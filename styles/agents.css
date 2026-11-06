@@ -918,6 +918,7 @@
 }
 
 #tests,
+#versions,
 #earnings,
 #coin,
 #api {
@@ -1011,4 +1012,371 @@
 .acard__remix {
   color: var(--accent);
   font-weight: 600;
+}
+
+/* versions: the version chip, the signed report strip, the changelog, a version's own page */
+
+.chip--link {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--line-2));
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.chip--link:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.report-strip {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 18px;
+  margin: 0 0 18px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--pass);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.report-strip > div {
+  display: grid;
+  gap: 2px;
+}
+
+.report-strip .hint {
+  margin: 0;
+}
+
+.report-strip code {
+  font-size: 12px;
+}
+
+.report-strip__seal svg {
+  display: block;
+  width: 30px;
+  height: 30px;
+  color: var(--pass);
+}
+
+.vlog {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.vlog__item {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) 260px;
+  gap: 22px;
+  padding: 20px 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.vlog__item.is-live {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  box-shadow: var(--shadow);
+}
+
+.vlog__num span {
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 46px;
+  line-height: 0.95;
+  letter-spacing: 0.01em;
+  color: var(--ink-3);
+}
+
+.vlog__item.is-live .vlog__num span {
+  color: var(--accent);
+}
+
+.vlog__body {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
+}
+
+.vlog__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+}
+
+.vlog__sentence {
+  margin: 0;
+  padding: 10px 14px;
+  border-left: 3px solid var(--hazard);
+  background: var(--surface-2);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 16px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.vlog__summary {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 15px;
+}
+
+.vlog__changes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.vlog__changes li {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 12px;
+  font-size: 13px;
+}
+
+.vlog__k {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding-top: 2px;
+}
+
+.vlog__lines {
+  display: grid;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.vlog__lines .is-add {
+  color: var(--ink);
+  background: var(--accent-soft);
+  border-radius: 3px;
+  padding: 0 6px;
+  justify-self: start;
+}
+
+.vlog__lines .is-del {
+  color: var(--ink-3);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--fail) 60%, transparent);
+  padding: 0 6px;
+}
+
+.vlog__more {
+  color: var(--ink-3);
+}
+
+.vlog__side {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  padding-left: 22px;
+  border-left: 1px solid var(--line);
+}
+
+.vlog__score {
+  display: flex;
+  gap: 20px;
+  font-weight: 600;
+  font-size: 18px;
+}
+
+.vlog__score i {
+  display: block;
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 3px;
+  font-weight: 400;
+}
+
+.vlog__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  font-size: 14px;
+}
+
+.vlog__links .link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.vlog__links svg {
+  width: 16px;
+  height: 16px;
+}
+
+.vlog__rollback {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.vlog__rollback .btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.vlog__event {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 10px 22px;
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius-lg);
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.vlog__eicon svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+}
+
+.badge--earlier {
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  color: var(--ink-2);
+}
+
+.vpage__made {
+  display: grid;
+  gap: 12px;
+}
+
+.vpage__num {
+  color: var(--accent);
+}
+
+.vpage__note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-top: 18px;
+  color: var(--ink-2);
+  font-size: 15px;
+}
+
+.agent-head .vlog__rollback {
+  margin-top: 16px;
+}
+
+.stat__value--sm {
+  font-size: 26px;
+}
+
+.vpage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 24px;
+  align-items: start;
+}
+
+.vpage__main {
+  min-width: 0;
+}
+
+.vpage__report dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 0 0 14px;
+  font-size: 13px;
+}
+
+.vpage__report dt {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding-top: 2px;
+}
+
+.vpage__report dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.vpage__report .hint {
+  margin: 12px 0 0;
+}
+
+.panel__head > svg {
+  width: 22px;
+  height: 22px;
+  color: var(--pass);
+}
+
+@media (max-width: 1000px) {
+  .vlog__item {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+  .vlog__side {
+    grid-column: 2;
+    padding-left: 0;
+    border-left: 0;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+  }
+  .vpage {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .vlog__item {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 16px;
+  }
+  .vlog__side {
+    grid-column: 1;
+  }
+  .vlog__num span {
+    font-size: 36px;
+  }
+  .vlog__changes li {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .report-strip {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .report-strip .btn {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+  .vlog__event {
+    padding: 10px 16px;
+  }
 }

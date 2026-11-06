@@ -18,7 +18,7 @@ export interface ChatMessage {
 }
 
 /** Why a request is made. OpenRouter ignores it; the recorded replies use it to answer the right question. */
-export type Purpose = 'spec' | 'remix' | 'tests' | 'agent' | 'judge';
+export type Purpose = 'spec' | 'remix' | 'version' | 'tests' | 'agent' | 'judge';
 
 export interface ChatRequest {
   purpose: Purpose;

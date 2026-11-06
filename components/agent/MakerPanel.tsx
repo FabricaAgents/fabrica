@@ -1,16 +1,16 @@
 'use client';
-// Tools only the agent's maker sees: price, pause, a new version, the coin launch, the buyback rule and burns.
+// Tools only the agent's maker sees: price, pause, improving it, the coin launch, the buyback rule and burns.
 // Every transaction here is built in this browser and signed by the maker's own Phantom.
+import Link from 'next/link';
 import { Keypair, PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js';
 import { Buffer } from 'buffer';
 import { useEffect, useState } from 'react';
-import type { CoinInfo, PaymentRequirements } from '../../shared/types';
+import type { CoinInfo } from '../../shared/types';
 import { usd } from '../../shared/format';
 import { burnCheckedInstruction, createV2Instruction, setComputeLimitInstruction } from '../../shared/pump/instructions';
 import { TOKEN_2022_PROGRAM } from '../../shared/pump/constants';
 import { api, ApiError } from '../../lib/api';
 import { getProvider, isUserRejection } from '../../lib/phantom';
-import { payRequirements } from '../../lib/pay';
 import { loadSession, signIn, useWallet } from '../../lib/wallet';
 
 async function sendWithPhantom(tx: Transaction | VersionedTransaction): Promise<string> {
@@ -27,7 +27,7 @@ async function blockhash() {
   return (await api<{ blockhash: string }>('/api/chain/blockhash')).body.blockhash;
 }
 
-export function MakerPanel(props: { slug: string; maker: string; status: string; makerFee: number; royalty: { amount: number; to: string } | null; coin: CoinInfo | null; agentName: string }) {
+export function MakerPanel(props: { slug: string; maker: string; status: string; makerFee: number; royalty: { amount: number; to: string } | null; coin: CoinInfo | null; agentName: string; versionsOpen: boolean }) {
   const w = useWallet();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -91,18 +91,6 @@ export function MakerPanel(props: { slug: string; maker: string; status: string;
       return 'Burned. The page shows it once the chain confirms.';
     });
 
-  const newVersion = () =>
-    act(async () => {
-      const q = await api<{ accepts: PaymentRequirements[]; draftId?: string }>('/api/build', { body: { fromAgent: props.slug } });
-      if (q.status !== 402) throw new Error('Unexpected answer.');
-      const header = await payRequirements(q.body.accepts[0], props.maker);
-      const r = await fetch('/api/build', { method: 'POST', headers: { 'content-type': 'application/json', 'x-payment': header }, body: JSON.stringify({ fromAgent: props.slug }) });
-      const b = await r.json();
-      if (!r.ok) throw new Error(b.message ?? 'Could not start the new version.');
-      window.location.href = `/build?draft=${b.draftId}`;
-      return 'Opening the new version.';
-    });
-
   return (
     <section className="maker panel" id="maker">
       <div className="panel__head">
@@ -123,9 +111,14 @@ export function MakerPanel(props: { slug: string; maker: string; status: string;
             <button className="btn btn--ghost btn--sm" disabled={busy} onClick={() => act(async () => (await api(`/api/agents/${props.slug}/${props.status === 'paused' ? 'resume' : 'pause'}`, { body: {} }), refresh(), props.status === 'paused' ? 'Resumed.' : 'Paused. No new quotes until you resume.'))}>
               {props.status === 'paused' ? 'Resume calls' : 'Pause calls'}
             </button>
-            <button className="btn btn--ghost btn--sm" disabled={busy} onClick={newVersion}>
-              Build a new version
-            </button>
+            {props.versionsOpen ? (
+              <Link className="btn btn--ghost btn--sm" href={`/improve/${props.slug}`}>
+                Improve this agent
+              </Link>
+            ) : null}
+            <a className="btn btn--ghost btn--sm" href="#versions">
+              Versions and rollback
+            </a>
           </div>
         </div>
         {props.coin ? (

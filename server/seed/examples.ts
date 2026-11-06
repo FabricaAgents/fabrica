@@ -58,6 +58,9 @@ export async function seedExamples(db: DB, files: FileStore | null, fixturesDir:
     for (const o of old) {
       db.prepare('DELETE FROM test_runs WHERE id = ?').run(o.test_run_id);
       db.prepare('DELETE FROM agents WHERE id = ?').run(o.id);
+      // A rebuilt example is a fresh v1 with a fresh signed report (the engine records it after seeding).
+      db.prepare('DELETE FROM agent_versions WHERE agent_id = ?').run(o.id);
+      db.prepare('DELETE FROM version_events WHERE agent_id = ?').run(o.id);
     }
     built.forEach((b, i) => {
       const s = b.run;

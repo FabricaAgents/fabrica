@@ -9,6 +9,7 @@ import { generateSpec } from './spec/generate';
 import { normalizeSpec, SpecError } from './spec/schema';
 import { generateTests, makerTest, type OriginalShape } from './suite/generate';
 import { generateRemix, remixProblems } from './remix';
+import { generateVersion, versionProblems } from './versions';
 import { REMIX_ROYALTY_BPS } from '../shared/remix';
 import { safetyTests } from './suite/safety';
 import { runSuite, summarize } from './suite/runner';
@@ -39,6 +40,18 @@ export interface DraftRow {
   parent_id: string | null;
   /** For a remix: JSON {before, summary}, the original's spec as it was when the remix was paid for. */
   remix: string | null;
+  /** For a new version from one sentence: JSON {before, summary, fromVersion}, the live version when it was paid for. */
+  improve: string | null;
+}
+
+export interface ImproveView {
+  agent: { slug: string; name: string };
+  before: AgentSpec;
+  summary: string | null;
+  /** The live version this one starts from, and the number it will get if published now. */
+  fromVersion: number;
+  nextVersion: number;
+  feeFloor: number;
 }
 
 export interface RemixView {
@@ -65,6 +78,7 @@ export interface DraftView {
   error: string | null;
   createdAt: number;
   remix: RemixView | null;
+  improve: ImproveView | null;
 }
 
 export const MAX_RUNS_PER_FEE = 3;
@@ -117,7 +131,29 @@ export class Drafts {
       error: r.error,
       createdAt: r.created_at,
       remix: this.remixView(r),
+      improve: this.improveView(r),
     };
+  }
+
+  /** The terms of a new version: what it starts from and the number it will get. */
+  improveView(r: DraftRow): ImproveView | null {
+    if (!r.improve || !r.agent_id) return null;
+    const stored = JSON.parse(r.improve) as { before: AgentSpec; summary: string | null; fromVersion: number };
+    const a = this.d.db.prepare('SELECT slug, spec, version, fee_floor FROM agents WHERE id = ?').get(r.agent_id) as { slug: string; spec: string; version: number; fee_floor: number } | undefined;
+    const top = (this.d.db.prepare('SELECT MAX(version) AS v FROM agent_versions WHERE agent_id = ?').get(r.agent_id) as { v: number | null }).v ?? 0;
+    return {
+      agent: { slug: a?.slug ?? '', name: a ? (JSON.parse(a.spec) as AgentSpec).name : stored.before.name },
+      before: stored.before,
+      summary: stored.summary,
+      fromVersion: stored.fromVersion,
+      nextVersion: Math.max(top, a?.version ?? 0) + 1,
+      feeFloor: a?.fee_floor ?? 0,
+    };
+  }
+
+  /** The unpublished version draft of an agent that was worked on recently, if any. */
+  openImprove(agentId: string, now = Date.now(), idleMs = 24 * 3_600_000): DraftRow | null {
+    return (this.d.db.prepare("SELECT * FROM drafts WHERE agent_id = ? AND improve IS NOT NULL AND status != 'published' AND updated_at > ? ORDER BY updated_at DESC LIMIT 1").get(agentId, now - idleMs) as DraftRow | undefined) ?? null;
   }
 
   /** The remix terms for a draft, read fresh: the parent's maker decides whether a royalty applies. */
@@ -138,6 +174,12 @@ export class Drafts {
 
   /** The titles of the original's task tests, which the remix's new tests follow in shape. */
   private originalShape(r: DraftRow): OriginalShape | undefined {
+    if (r.improve && r.agent_id) {
+      // A new version is tested on the kinds of tasks the live version was, as they apply now, plus the change.
+      const run = this.d.db.prepare('SELECT t.results FROM agents a JOIN test_runs t ON t.id = a.test_run_id WHERE a.id = ?').get(r.agent_id) as { results: string } | undefined;
+      const results = run ? (JSON.parse(run.results) as TestResult[]) : [];
+      return { name: (JSON.parse(r.improve) as { before: AgentSpec }).before.name, tasks: results.filter((t) => t.kind === 'task').map((t) => t.title).slice(0, 8) };
+    }
     if (!r.parent_id || !r.remix) return undefined;
     const run = this.d.db.prepare('SELECT t.results FROM agents a JOIN test_runs t ON t.id = a.test_run_id WHERE a.id = ?').get(r.parent_id) as { results: string } | undefined;
     const results = run ? (JSON.parse(run.results) as TestResult[]) : [];
@@ -162,11 +204,11 @@ export class Drafts {
     return this.d.ledger.room(`draft:${id}`, micros, r.ai_budget).ok;
   }
 
-  create(maker: string, sentence: string, feeSig: string | null, budget: number, fromAgent?: { id: string; spec: AgentSpec; tests: TestCase[] }, remixOf?: { id: string; spec: AgentSpec }): string {
+  create(maker: string, sentence: string, feeSig: string | null, budget: number, fromAgent?: { id: string; spec: AgentSpec; tests: TestCase[] }, remixOf?: { id: string; spec: AgentSpec }, improve?: { agentId: string; spec: AgentSpec; version: number }): string {
     const id = `d_${randomBytes(9).toString('base64url')}`;
     const t = Date.now();
     this.d.db
-      .prepare('INSERT INTO drafts (id, maker, sentence, spec, tests, status, fee_sig, ai_budget, agent_id, parent_id, remix, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .prepare('INSERT INTO drafts (id, maker, sentence, spec, tests, status, fee_sig, ai_budget, agent_id, parent_id, remix, improve, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(
         id,
         maker,
@@ -176,9 +218,10 @@ export class Drafts {
         fromAgent ? (fromAgent.tests.length ? 'tests' : 'spec') : 'spec_pending',
         feeSig,
         budget,
-        fromAgent?.id ?? null,
+        fromAgent?.id ?? improve?.agentId ?? null,
         remixOf?.id ?? null,
         remixOf ? JSON.stringify({ before: remixOf.spec, summary: null }) : null,
+        improve ? JSON.stringify({ before: improve.spec, summary: null, fromVersion: improve.version }) : null,
         t,
         t,
       );
@@ -199,6 +242,14 @@ export class Drafts {
     }
     this.set(id, { status: 'spec_pending', error: null });
     try {
+      if (r.improve) {
+        // A new version rewrites only what its sentence changes, starting from the live version it was paid for.
+        const stored = JSON.parse(r.improve) as { before: AgentSpec };
+        const { spec, summary, costMicros } = await generateVersion(this.d.provider(), stored.before, r.sentence, id);
+        this.spend(id, costMicros);
+        this.set(id, { spec: JSON.stringify(spec), tests: null, status: 'spec', improve: JSON.stringify({ ...stored, summary }) });
+        return;
+      }
       if (r.parent_id && r.remix) {
         // A remix rewrites only what its sentence changes, starting from the original as it was when paid for.
         const stored = JSON.parse(r.remix) as { before: AgentSpec };
@@ -224,6 +275,12 @@ export class Drafts {
     if (remix) {
       const problems = remixProblems(remix.before, spec, remix.feeFloor);
       if (problems.length) throw new SpecError(problems);
+    }
+    const improve = this.improveView(r);
+    if (improve) {
+      const problems = versionProblems(improve.before, spec, improve.feeFloor);
+      if (problems.length) throw new SpecError(problems);
+      spec.slug = improve.before.slug;
     }
     // Tests written for the old input fields no longer fit after an input change; keep them only if they still validate.
     let tests = r.tests ? (JSON.parse(r.tests) as TestCase[]) : null;

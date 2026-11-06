@@ -28,6 +28,8 @@ export interface QuoteRow {
   ai_amt: number;
   platform_amt: number;
   royalty_amt: number;
+  /** The agent version a call quote was made for; the paid call runs that version. 0 for build quotes. */
+  version: number;
   recipients: string;
   created_at: number;
   expires_at: number;
@@ -44,6 +46,8 @@ export interface QuoteInput {
   makerWallet?: string;
   /** The original's maker, for a call to a remix with a royalty. */
   royaltyWallet?: string | null;
+  /** For a call: the agent version this quote is for. */
+  version?: number;
   ip: string;
   resource: string;
   description: string;
@@ -120,8 +124,8 @@ export class Payments {
     const now = Date.now();
     const total = recipients.reduce((n, r) => n + Number(r.amount), 0);
     this.db
-      .prepare('INSERT INTO quotes (nonce, kind, agent_id, maker, meta, input_hash, total, maker_amt, ai_amt, platform_amt, royalty_amt, recipients, ip, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(nonce, q.kind, q.agentId ?? null, q.maker ?? null, q.meta === undefined ? null : JSON.stringify(q.meta), q.inputHash ?? null, total, q.price.maker, q.price.ai, q.price.platform, q.price.royalty ?? 0, JSON.stringify(recipients), q.ip, now, now + QUOTE_TTL_MS);
+      .prepare('INSERT INTO quotes (nonce, kind, agent_id, maker, meta, input_hash, total, maker_amt, ai_amt, platform_amt, royalty_amt, version, recipients, ip, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(nonce, q.kind, q.agentId ?? null, q.maker ?? null, q.meta === undefined ? null : JSON.stringify(q.meta), q.inputHash ?? null, total, q.price.maker, q.price.ai, q.price.platform, q.price.royalty ?? 0, q.version ?? 0, JSON.stringify(recipients), q.ip, now, now + QUOTE_TTL_MS);
     const payTo = recipients.find((r) => r.role === 'maker' || r.role === 'build')?.address ?? recipients[0].address;
     return {
       scheme: 'split',

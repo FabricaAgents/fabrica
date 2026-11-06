@@ -22,7 +22,7 @@ Check types:
 - {"type":"regex_matches","path":"field","shouldMatch":[...],"shouldNotMatch":[...]}: the field holds a regular expression that behaves this way.
 - {"type":"file_made"}: the agent produced a downloadable file.
 - {"type":"judge","rubric":"..."}: only when nothing else can check it; one clear yes or no question about the answer.
-When the spec names an "original", the agent is a remix of it: cover the kinds of tasks the original was tested on, as they apply now, and test the change itself.
+When the spec names an "original", the agent is a remix or a new version of it: cover the kinds of tasks the original was tested on, as they apply now, and test the change itself.
 Never put secrets, private data or harmful requests in tests; safety tests are added separately.`;
 
 function cleanCheck(c: any): Check | null {
@@ -73,7 +73,7 @@ export function cleanTasks(spec: AgentSpec, raw: unknown): TestCase[] {
   return out;
 }
 
-/** For a remix: the original's name and the titles of its task tests, the shape the new tests follow. */
+/** For a remix or a new version: the name and task test titles it starts from, the shape the new tests follow. */
 export interface OriginalShape {
   name: string;
   tasks: string[];

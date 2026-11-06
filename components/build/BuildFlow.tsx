@@ -29,6 +29,20 @@ interface Draft {
   price: PriceBreakdown | null;
   buildFee: number;
   remix: { parent: { slug: string; name: string; maker: string | null; example: boolean }; before: AgentSpec; summary: string | null; royaltyBps: number; feeFloor: number } | null;
+  improve: { agent: { slug: string; name: string }; before: AgentSpec; summary: string | null; fromVersion: number; nextVersion: number; feeFloor: number } | null;
+}
+
+/** The live agent a new version starts from, as the improve page passes it in. */
+export interface ImproveStart {
+  slug: string;
+  name: string;
+  tagline: string;
+  maker: string;
+  version: number;
+  next: number;
+  price: PriceBreakdown;
+  tests: { taskPassed: number; taskTotal: number; safetyPassed: number; safetyTotal: number } | null;
+  paidCalls: number;
 }
 
 /** The agent a remix starts from, as the remix page passes it in. */
@@ -58,6 +72,7 @@ const IDEAS = [
 ];
 
 const REMIX_IDEAS = ['Answer in Spanish as well as English', 'Keep every answer under 60 words', 'Also return a one-line summary at the top'];
+const IMPROVE_IDEAS = ['Also return a confidence note for every answer', 'Keep every answer under 80 words', 'Say plainly when the input is missing something'];
 
 const FIELD_TYPES: FieldType[] = ['string', 'text', 'number', 'integer', 'boolean', 'string[]', 'object'];
 const RUNS_PER_ROUND = 3;
@@ -72,12 +87,12 @@ async function payAndPost(path: string, body: unknown, payer: string): Promise<a
   return b;
 }
 
-function Steps({ status, remix }: { status: Draft['status'] | 'describe'; remix?: boolean }) {
+function Steps({ status, remix, improve }: { status: Draft['status'] | 'describe'; remix?: boolean; improve?: boolean }) {
   const order = ['describe', 'spec', 'tests', 'publish'];
   const at = status === 'describe' ? 0 : status === 'spec_pending' || status === 'spec' || status === 'failed' ? 1 : status === 'tests_pending' || status === 'tests' || status === 'running' ? 2 : 3;
   return (
     <ol className="steps">
-      {[remix ? 'Change' : 'Describe', 'Spec', 'Tests', 'Publish'].map((s, i) => (
+      {[improve ? 'Improve' : remix ? 'Change' : 'Describe', 'Spec', 'Tests', 'Publish'].map((s, i) => (
         <li key={s} className={i < at ? 'is-done' : i === at ? 'is-now' : ''}>
           <span>{i < at ? <IconCheck /> : `0${i + 1}`}</span>
           {s}
@@ -385,7 +400,7 @@ function TestsPanel({ draft, busy, onRun, onEdit }: { draft: Draft; busy: boolea
 
 // ------------------------------------------------------------------ the flow
 
-export function BuildFlow({ initialSentence, initialDraft, buildFee, buildOpen, closedReason, remix }: { initialSentence: string; initialDraft: string | null; buildFee: number; buildOpen: boolean; closedReason: string | null; remix?: RemixStart }) {
+export function BuildFlow({ initialSentence, initialDraft, buildFee, buildOpen, closedReason, remix, improve }: { initialSentence: string; initialDraft: string | null; buildFee: number; buildOpen: boolean; closedReason: string | null; remix?: RemixStart; improve?: ImproveStart }) {
   const w = useWallet();
   const [sentence, setSentence] = useState(initialSentence);
   const [draftId, setDraftId] = useState<string | null>(initialDraft);
@@ -461,10 +476,17 @@ export function BuildFlow({ initialSentence, initialDraft, buildFee, buildOpen, 
         const ok = await signIn();
         if (!ok) return;
       }
-      const b = await payAndPost('/api/build', remix ? { remixOf: remix.slug, sentence } : { sentence }, currentWallet()!);
-      go(b.draftId);
+      try {
+        const b = improve ? await payAndPost(`/api/agents/${improve.slug}/versions`, { sentence }, currentWallet()!) : await payAndPost('/api/build', remix ? { remixOf: remix.slug, sentence } : { sentence }, currentWallet()!);
+        go(b.draftId);
+      } catch (e) {
+        // A version already in progress opens instead of a second one.
+        if (e instanceof ApiError && e.body?.draftId) return go(String(e.body.draftId));
+        throw e;
+      }
       void loadMe();
     });
+  const notMaker = Boolean(improve && w.session && w.session !== improve.maker);
 
   // ---------------------------------------------------------------- views
 
@@ -473,15 +495,15 @@ export function BuildFlow({ initialSentence, initialDraft, buildFee, buildOpen, 
   if (!draftId || !draft) {
     return (
       <div className="build-start">
-        <Steps status="describe" remix={Boolean(remix)} />
+        <Steps status="describe" remix={Boolean(remix)} improve={Boolean(improve)} />
         <div className="build-start__grid">
           <div className="panel describe">
             <label className="label" htmlFor="sentence">
-              {remix ? `What should your version of ${remix.name} do differently? One sentence.` : 'Describe your agent in one sentence'}
+              {improve ? `What should v${improve.next} of ${improve.name} do better? One sentence.` : remix ? `What should your version of ${remix.name} do differently? One sentence.` : 'Describe your agent in one sentence'}
             </label>
-            <textarea id="sentence" className="describe__input" rows={3} maxLength={400} value={sentence} placeholder={remix ? 'Make it...' : 'It reads...'} onChange={(e) => setSentence(e.target.value)} />
+            <textarea id="sentence" className="describe__input" rows={3} maxLength={400} value={sentence} placeholder={improve ? 'Also...' : remix ? 'Make it...' : 'It reads...'} onChange={(e) => setSentence(e.target.value)} />
             <div className="describe__ideas">
-              {(remix ? REMIX_IDEAS : IDEAS).map((i) => (
+              {(improve ? IMPROVE_IDEAS : remix ? REMIX_IDEAS : IDEAS).map((i) => (
                 <button key={i} type="button" className="chip chip--btn" onClick={() => setSentence(i)}>
                   {i}
                 </button>
@@ -489,10 +511,18 @@ export function BuildFlow({ initialSentence, initialDraft, buildFee, buildOpen, 
             </div>
             <div className="describe__foot">
               <span className="hint">{sentence.trim().length < 12 ? 'At least a dozen characters, at most 400.' : `${sentence.trim().length} of 400 characters`}</span>
-              {buildOpen ? (
+              {notMaker ? (
+                <span className="notice">
+                  Only the maker of {improve!.name} can make its versions.{' '}
+                  <Link className="link" href={`/remix/${improve!.slug}`}>
+                    Remix it
+                  </Link>{' '}
+                  to make your own.
+                </span>
+              ) : buildOpen ? (
                 <button className="btn btn--primary btn--lg" type="button" disabled={busy || sentence.trim().length < 12} onClick={start}>
                   {busy ? <span className="spinner" /> : <IconWallet />}
-                  {w.session ? `Pay ${usd(buildFee)} and ${remix ? 'remix' : 'build'}` : `Sign in and ${remix ? 'remix' : 'build'}`}
+                  {w.session ? `Pay ${usd(buildFee)} and ${improve ? 'improve' : remix ? 'remix' : 'build'}` : `Sign in and ${improve ? 'improve' : remix ? 'remix' : 'build'}`}
                 </button>
               ) : (
                 <span className="notice">{closedReason}</span>
@@ -502,9 +532,17 @@ export function BuildFlow({ initialSentence, initialDraft, buildFee, buildOpen, 
           </div>
           <aside className="build-aside">
             {remix ? <RemixOriginal remix={remix} wallet={w.session} /> : null}
+            {improve ? <ImproveCurrent improve={improve} /> : null}
             <div className="panel panel__body">
               <span className="kicker kicker--plain">One build round, {usd(buildFee)}</span>
-              {remix ? (
+              {improve ? (
+                <ul className="ticks">
+                  <li>v{improve.next} of the spec, changed only where your sentence asks</li>
+                  <li>The before and after, side by side, to edit</li>
+                  <li>The full suite again: new task tests and every attack</li>
+                  <li>Up to {RUNS_PER_ROUND} full test runs, then v{improve.next} goes live when it passes</li>
+                </ul>
+              ) : remix ? (
                 <ul className="ticks">
                   <li>Your version of the spec, changed only where your sentence asks</li>
                   <li>The before and after, side by side, to edit</li>
@@ -569,14 +607,14 @@ export function BuildFlow({ initialSentence, initialDraft, buildFee, buildOpen, 
   return (
     <div className="build-draft">
       <div className="build-draft__top">
-        <Steps status={d.status} remix={Boolean(d.remix)} />
+        <Steps status={d.status} remix={Boolean(d.remix)} improve={Boolean(d.improve)} />
         <button className="link" type="button" onClick={() => go(null)}>
           All drafts
         </button>
       </div>
       <div className="order order--wide">
         <span className="order__head">
-          <span>{d.remix ? `Remix of ${d.remix.parent.name}` : 'Work order'}</span>
+          <span>{d.improve ? `v${d.improve.nextVersion} of ${d.improve.agent.name}` : d.remix ? `Remix of ${d.remix.parent.name}` : 'Work order'}</span>
           <span>
             AI used {usd(d.aiSpent)} of {usd(d.aiBudget)}
           </span>
@@ -587,13 +625,16 @@ export function BuildFlow({ initialSentence, initialDraft, buildFee, buildOpen, 
       {d.error ? <div className="notice notice--fail">{d.error}</div> : null}
 
       {d.status === 'spec_pending' ? (
-        d.remix ? (
+        d.improve ? (
+          <Working title={`Writing v${d.improve.nextVersion}`} note={`Starting from v${d.improve.fromVersion} of ${d.improve.agent.name}, Fabrica changes only what your sentence asks for.`} />
+        ) : d.remix ? (
           <Working title="Writing your version" note={`Starting from ${d.remix.parent.name}, Fabrica changes only what your sentence asks for.`} />
         ) : (
           <Working title="Writing the spec" note="Brief, system prompt, tools, contract and price, from your sentence." />
         )
       ) : null}
       {d.remix && d.spec && d.status !== 'spec_pending' ? <RemixDiff before={d.remix.before} after={d.spec} parentSlug={d.remix.parent.slug} summary={d.remix.summary} /> : null}
+      {d.improve && d.spec && d.status !== 'spec_pending' ? <RemixDiff before={d.improve.before} after={d.spec} parentSlug={d.improve.agent.slug} summary={d.improve.summary} labels={{ origin: `v${d.improve.fromVersion}`, before: `v${d.improve.fromVersion}`, after: `v${d.improve.nextVersion}` }} /> : null}
       {d.status === 'failed' ? (
         <div className="panel panel__body">
           <button className="btn btn--primary" type="button" disabled={busy} onClick={() => step(async () => (await api(`/api/drafts/${d.id}/respec`, { body: {} }), void loadDraft(d.id)))}>
@@ -660,10 +701,16 @@ export function BuildFlow({ initialSentence, initialDraft, buildFee, buildOpen, 
       {d.status === 'tested' && fresh ? (
         run!.publishable ? (
           <div className="build-next build-next--pass">
-            <span>
-              <b>Passed.</b> {run!.taskPassed}/{run!.taskTotal} tasks and every safety test. Publishing opens it for paid calls at {d.price ? usd(d.price.total) : ''} per call, paid straight to your wallet
-              {d.price?.royalty ? `, with ${usd(d.price.royalty)} of each call to the maker of ${d.remix?.parent.name ?? 'the original'} in the same payment` : ''}.
-            </span>
+            {d.improve ? (
+              <span>
+                <b>Passed.</b> {run!.taskPassed}/{run!.taskTotal} tasks and every safety test. Publishing makes v{d.improve.nextVersion} live on the same page, with the same receipts and earnings, at {d.price ? usd(d.price.total) : ''} per call. Calls already quoted finish on the version they were quoted on.
+              </span>
+            ) : (
+              <span>
+                <b>Passed.</b> {run!.taskPassed}/{run!.taskTotal} tasks and every safety test. Publishing opens it for paid calls at {d.price ? usd(d.price.total) : ''} per call, paid straight to your wallet
+                {d.price?.royalty ? `, with ${usd(d.price.royalty)} of each call to the maker of ${d.remix?.parent.name ?? 'the original'} in the same payment` : ''}.
+              </span>
+            )}
             <button
               className="btn btn--primary btn--lg"
               type="button"
@@ -671,11 +718,11 @@ export function BuildFlow({ initialSentence, initialDraft, buildFee, buildOpen, 
               onClick={() =>
                 step(async () => {
                   const r = await api<{ slug: string }>(`/api/drafts/${d.id}/publish`, { body: {} });
-                  window.location.href = `/agents/${r.body.slug}`;
+                  window.location.href = d.improve ? `/agents/${r.body.slug}#versions` : `/agents/${r.body.slug}`;
                 })
               }
             >
-              Publish <IconArrow />
+              {d.improve ? `Publish v${d.improve.nextVersion}` : 'Publish'} <IconArrow />
             </button>
           </div>
         ) : (
@@ -697,13 +744,46 @@ export function BuildFlow({ initialSentence, initialDraft, buildFee, buildOpen, 
       {d.status === 'published' && d.agentSlug ? (
         <div className="build-next build-next--pass">
           <span>
-            <b>Live.</b> Your agent takes paid calls now.
+            <b>Live.</b> {d.improve ? 'This version is published on your agent\u2019s page.' : 'Your agent takes paid calls now.'}
           </span>
-          <Link className="btn btn--primary" href={`/agents/${d.agentSlug}`}>
+          <Link className="btn btn--primary" href={d.improve ? `/agents/${d.agentSlug}#versions` : `/agents/${d.agentSlug}`}>
             Open its page <IconArrow />
           </Link>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** The live version a new one starts from, and what it keeps. */
+function ImproveCurrent({ improve }: { improve: ImproveStart }) {
+  return (
+    <div className="panel remix-orig">
+      <div className="panel__head">
+        <span className="h4">Live now: v{improve.version}</span>
+        <span className="badge badge--live">Live</span>
+      </div>
+      <div className="panel__body">
+        <Link className="remix-orig__name" href={`/agents/${improve.slug}#versions`}>
+          {improve.name}
+        </Link>
+        <p className="hint">{improve.tagline}</p>
+        <div className="remix-orig__facts">
+          <span>
+            <i>Tasks</i>
+            {improve.tests ? `${improve.tests.taskPassed}/${improve.tests.taskTotal}` : 'None'}
+          </span>
+          <span>
+            <i>Safety</i>
+            {improve.tests ? `${improve.tests.safetyPassed}/${improve.tests.safetyTotal}` : 'None'}
+          </span>
+          <span>
+            <i>Paid calls</i>
+            {improve.paidCalls}
+          </span>
+        </div>
+        <p className="remix-orig__deal">v{improve.next} keeps this page, its receipts, earnings, coin and remixes. v{improve.version} stays on record, and you can make it live again in one click.</p>
+      </div>
     </div>
   );
 }

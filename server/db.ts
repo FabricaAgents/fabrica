@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS drafts (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   parent_id TEXT,
-  remix TEXT
+  remix TEXT,
+  improve TEXT
 );
 CREATE INDEX IF NOT EXISTS drafts_maker ON drafts(maker, updated_at);
 
@@ -102,7 +103,8 @@ CREATE TABLE IF NOT EXISTS quotes (
   expires_at INTEGER NOT NULL,
   claimed_sig TEXT UNIQUE,
   claimed_at INTEGER,
-  royalty_amt INTEGER NOT NULL DEFAULT 0
+  royalty_amt INTEGER NOT NULL DEFAULT 0,
+  version INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS quotes_expiry ON quotes(expires_at);
 
@@ -130,7 +132,8 @@ CREATE TABLE IF NOT EXISTS receipts (
   buyback_bps INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   royalty_amt INTEGER NOT NULL DEFAULT 0,
-  royalty_to TEXT
+  royalty_to TEXT,
+  version INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS receipts_agent ON receipts(agent_id, created_at);
 CREATE INDEX IF NOT EXISTS receipts_payer ON receipts(agent_id, payer);
@@ -172,6 +175,36 @@ CREATE TABLE IF NOT EXISTS files (
   created_at INTEGER NOT NULL
 );
 
+-- Every version an agent has had, as it was tested, with its signed test report. Rows are never changed afterwards.
+CREATE TABLE IF NOT EXISTS agent_versions (
+  agent_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  spec TEXT NOT NULL,
+  test_run_id TEXT,
+  draft_id TEXT,
+  kind TEXT NOT NULL,
+  sentence TEXT,
+  summary TEXT,
+  base_version INTEGER,
+  changes TEXT NOT NULL DEFAULT '[]',
+  maker TEXT,
+  report_sig TEXT NOT NULL DEFAULT '',
+  report_at INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (agent_id, version)
+);
+
+-- The changelog: which version went live when, by publishing or by a rollback.
+CREATE TABLE IF NOT EXISTS version_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  from_version INTEGER,
+  at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS version_events_agent ON version_events(agent_id, at);
+
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, detail TEXT
 );
@@ -188,6 +221,9 @@ const ADDED: [table: string, column: string, decl: string][] = [
   ['quotes', 'royalty_amt', 'INTEGER NOT NULL DEFAULT 0'],
   ['receipts', 'royalty_amt', 'INTEGER NOT NULL DEFAULT 0'],
   ['receipts', 'royalty_to', 'TEXT'],
+  ['drafts', 'improve', 'TEXT'],
+  ['quotes', 'version', 'INTEGER NOT NULL DEFAULT 0'],
+  ['receipts', 'version', 'INTEGER NOT NULL DEFAULT 0'],
 ];
 
 export function migrate(db: DB) {

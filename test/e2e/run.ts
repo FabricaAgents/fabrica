@@ -1,6 +1,6 @@
 // Headless end to end, against the production build in test mode (pretend chain, recorded model replies).
 // A stand-in Phantom signs with a real keypair held by this script. Run after `npm run build`: npm run test:e2e
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,6 +9,7 @@ import { Browser, chromeAvailable, type Page } from './cdp';
 import { FAKE_PHANTOM, walletFor } from './rig';
 
 const PORT = 3731;
+const ADMIN = 'e2e-admin-token-0123456789abcdef';
 const BASE = `http://127.0.0.1:${PORT}`;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fabrica-e2e-'));
 const ops = Keypair.generate().publicKey.toBase58();
@@ -52,6 +53,7 @@ const server = spawn('nice', ['node', '--import', 'tsx', 'server/main.ts'], {
     FABRICA_BURN_WALLET: burn,
     FABRICA_USDC_MINT: usdc,
     FABRICA_X_URL: '',
+    FABRICA_ADMIN_TOKEN: ADMIN,
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -78,7 +80,7 @@ const walletBinding = walletFor(user);
 
 const browser = new Browser();
 await browser.start();
-const PAGES = ['/', '/agents', '/agents/mint-inspector', '/agents/release-notes-writer', '/remix/release-notes-writer', '/build', '/docs', '/roadmap', '/token', '/terms'];
+const PAGES = ['/', '/agents', '/agents/mint-inspector', '/agents/release-notes-writer', '/agents/release-notes-writer/v/1', '/remix/release-notes-writer', '/build', '/docs', '/roadmap', '/token', '/terms'];
 let liveSlug = '';
 let remixSlug = '';
 
@@ -103,7 +105,10 @@ await step('the copy keeps the house rules on every page', async () => {
     assert(!html.includes('—'), `${p} has an em dash`);
     assert(!/\bdemo\b/i.test(text), `${p} says demo`);
     assert(!/memecoin/i.test(text), `${p} says memecoin`);
-    assert(!/github\.com/i.test(html), `${p} links GitHub`);
+    // GitHub appears once, as the header's link to the open source repository, and nowhere else.
+    const gh = html.match(/github\.com[^"'\s<]*/gi) ?? [];
+    assert(gh.every((u) => u === 'github.com/FabricaAgents/fabrica'), `${p} links GitHub elsewhere: ${gh.join(', ')}`);
+    assert(!/github/i.test(text), `${p} names GitHub in the copy`);
     assert(!/aria-label="Fabrica on X"/.test(html), `${p} shows the X icon with no X link set`);
     assert(html.includes('Nothing here is advice.'), `${p} lacks the risk line`);
   }
@@ -221,6 +226,67 @@ await step('a paid call to the remix splits four ways, the royalty to the origin
   await page.close();
   assert((await bal(user)) - before.orig === BigInt(a.price.royalty), 'the original maker got the royalty');
   assert((await bal(remixer)) - before.remixer === BigInt(a.price.maker), 'the remix maker got the rest of the maker part');
+});
+
+await step('versions: the maker improves the agent with one sentence, the full suite runs, v2 goes live with its record, then one click rolls back', async () => {
+  const page = await browser.page(`${BASE}/agents/${liveSlug}`, { onNew: FAKE_PHANTOM(user.publicKey.toBase58()), bindings: walletBinding });
+  await page.waitFor('document.readyState === "complete"', 20000, 'the agent page');
+  // The browser still holds the remixer's sign-in; the maker signs in on the improve page.
+  await page.eval(`fetch('/api/auth/logout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(() => true)`);
+  await page.goto(`${BASE}/improve/${liveSlug}`);
+  await page.waitFor('!!document.querySelector("#sentence") && !!document.querySelector(".remix-orig")', 20000, 'the improve page');
+  await page.eval(`(() => { const t = document.querySelector('#sentence'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(t, 'Also return how many minutes the pasted text takes to read'); t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await page.waitFor('[...document.querySelectorAll("button")].some(b => b.textContent.includes("Sign in and improve") && !b.disabled)', 10000, 'the improve button');
+  await page.click('Sign in and improve');
+  await page.waitFor('document.querySelectorAll(".rdiff__row").length >= 2 && !!document.querySelector("#sp-name")?.value', 30000, 'the before and after');
+  const diff = await page.eval('document.querySelector("#before-after").textContent');
+  assert(/v1/.test(diff) && /v2/.test(diff) && /reading_minutes/.test(diff), `before and after: ${diff.slice(0, 240)}`);
+  await page.click('Write the tests');
+  await page.waitFor('document.querySelectorAll(".tcase").length > 4', 30000, 'the tests');
+  await page.click('Run the tests');
+  await page.waitFor('[...document.querySelectorAll("button")].some(b => b.textContent.startsWith("Publish v2"))', 60000, 'a passing run');
+  await page.click('Publish v2');
+  await page.waitFor('location.pathname === "/agents/' + liveSlug + '" && !!document.querySelector("#versions .vlog__item.is-live")', 30000, 'the agent page with v2');
+  const live = await page.eval('document.querySelector("#versions .vlog__item.is-live .vlog__num").textContent');
+  assert(live.trim() === 'v2', `live version shown: ${live}`);
+  const a = await (await fetch(`${BASE}/api/agents/${liveSlug}`)).json();
+  assert(a.version === 2 && a.stats.paidCalls === 1 && a.report?.version === 2, `after publishing: v${a.version}, ${a.stats.paidCalls} calls, report v${a.report?.version}`);
+  await page.waitFor('[...document.querySelectorAll("button")].some(b => b.textContent.includes("Make v1 live again"))', 20000, 'the rollback button');
+  await page.click('Make v1 live again');
+  await page.waitFor('!!document.querySelector(".vlog__event") && document.querySelector("#versions .vlog__item.is-live .vlog__num")?.textContent.trim() === "v1"', 30000, 'the rollback in the changelog');
+  const after = await (await fetch(`${BASE}/api/agents/${liveSlug}`)).json();
+  assert(after.version === 1 && after.versionCount === 2, `after rollback: v${after.version} of ${after.versionCount}`);
+  assert(!page.errors.length, page.errors.join(' | '));
+  await page.close();
+  for (const phone of [false, true]) {
+    for (const p of [`/agents/${liveSlug}`, `/agents/${liveSlug}/v/2`, `/improve/${liveSlug}`]) {
+      const v = await browser.page(BASE + p, { phone });
+      await v.waitFor('document.readyState === "complete" && !!document.querySelector("footer")', 20000, `${p} loaded`);
+      await new Promise((r) => setTimeout(r, 400));
+      const m = await v.eval('({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth })');
+      assert(m.sw <= m.cw + 1, `${p} ${phone ? 'phone' : 'desktop'} scrolls sideways (${m.sw} > ${m.cw})`);
+      assert(!v.errors.length, `${p}: ${v.errors.join(' | ')}`);
+      await v.close();
+    }
+  }
+});
+
+await step('backups: a snapshot on request, npm run backup:pull saves it here with a matching hash, health shows the time', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fabrica-pull-'));
+  try {
+    const r = spawnSync('node', ['--import', 'tsx', 'scripts/backup-pull.ts', dir, '--fresh'], { env: { ...process.env, FABRICA_SITE_URL: BASE, FABRICA_ADMIN_TOKEN: ADMIN }, encoding: 'utf8' });
+    assert(r.status === 0, `backup:pull failed: ${r.stdout} ${r.stderr}`);
+    assert(/matches the server/.test(r.stdout), r.stdout);
+    const files = fs.readdirSync(dir).filter((f) => /^fabrica-\d{8}-\d{6}\.db$/.test(f));
+    assert(files.length === 1, `saved: ${fs.readdirSync(dir).join(', ')}`);
+    assert(fs.readFileSync(path.join(dir, files[0])).subarray(0, 15).toString() === 'SQLite format 3', 'a SQLite file');
+    const bad = spawnSync('node', ['--import', 'tsx', 'scripts/backup-pull.ts', dir], { env: { ...process.env, FABRICA_SITE_URL: BASE, FABRICA_ADMIN_TOKEN: 'wrong-token-wrong-token-wrong' }, encoding: 'utf8' });
+    assert(bad.status === 1 && /refused/.test(bad.stderr), `a wrong token: ${bad.stderr}`);
+    const h = await (await fetch(`${BASE}/api/health`)).json();
+    assert(h.backup?.last && h.switches.versions === 'on', JSON.stringify(h.backup));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 await browser.stop();

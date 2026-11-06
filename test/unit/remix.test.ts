@@ -172,7 +172,7 @@ test('the chain record is checked too: a sent payment without the royalty is ref
 test('receipts: no royalty keeps the v1 message; a royalty is signed in v2 and can not be edited', () => {
   const keys = receiptKeys(openMemoryDb());
   const pub = bs58.encode(keys.publicKey);
-  const base = { id: 'r_x', agentSlug: 'a', payer: 'p', txSig: 's', total: 21000, maker: 8000, royalty: 0, royaltyTo: null, ai: 9000, platform: 2000, status: 'ok' as const, inputHash: 'i', outputHash: 'o', ms: 5, aiCostMicros: 1, createdAt: 1 };
+  const base = { id: 'r_x', agentSlug: 'a', payer: 'p', txSig: 's', total: 21000, maker: 8000, royalty: 0, royaltyTo: null, ai: 9000, platform: 2000, status: 'ok' as const, inputHash: 'i', outputHash: 'o', ms: 5, aiCostMicros: 1, createdAt: 1, version: 0 };
   assert.ok(receiptMessage(base).startsWith('fabrica-receipt:v1|r_x|a|p|s|21000|8000|9000|'));
   const r = { ...base, maker: 6000, royalty: 2000, royaltyTo: orig };
   assert.ok(receiptMessage(r).startsWith(`fabrica-receipt:v2|r_x|a|p|s|21000|6000|2000|${orig}|9000|`));

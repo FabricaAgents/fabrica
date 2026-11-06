@@ -23,6 +23,8 @@ import { Calls } from './calls';
 import { Coins } from './coins/coins';
 import { TokenDesk } from './token/fabrica';
 import { ChainStream } from './solana/stream';
+import { Versions } from './versions';
+import { Backups } from './backup';
 
 export interface EngineOptions {
   cfg: Config;
@@ -51,6 +53,8 @@ export class Engine {
   readonly token: TokenDesk;
   readonly stream: ChainStream | null;
   readonly receiptKeys;
+  readonly versions: Versions;
+  readonly backups: Backups;
   readonly startedAt = Date.now();
   readonly log: (m: string) => void;
   provider: Provider | null;
@@ -83,6 +87,10 @@ export class Engine {
     this.agents = new AgentStore(this.db, o.cfg, (w) => this.token.cachedTier(w));
     this.drafts = new Drafts({ db: this.db, provider: () => this.requireProvider(), io: () => this.io, files: this.files, ledger: this.ledger });
     this.receiptKeys = receiptKeys(this.db);
+    // Test reports are signed with the receipt key, so one public key checks both.
+    this.versions = new Versions(this.db, this.receiptKeys, o.cfg.siteUrl);
+    this.agents.versions = this.versions;
+    this.backups = new Backups(this.db, o.cfg.dataDir, this.log);
     this.calls = new Calls(this);
     this.coins = new Coins(this);
     this.stream = o.cfg.testMode || this.quiet ? null : new ChainStream(this);
@@ -95,6 +103,8 @@ export class Engine {
 
   async start() {
     this.drafts.recover();
+    // Agents from before versions get their version record and a signed report from their existing test run.
+    this.versions.ensureAll();
     if (!this.quiet) {
       void this.seed();
       if (this.cfg.aiMode === 'openrouter') {
@@ -110,6 +120,17 @@ export class Engine {
       });
       this.every(2 * 60_000, () => this.coins.refreshCurves());
       this.every(60 * 60_000, () => this.token.burnTick());
+      // A snapshot of the database once a day; the check runs hourly and a few minutes after a start.
+      this.every(60 * 60_000, () => this.backups.due());
+      const first = setTimeout(() => {
+        try {
+          this.backups.due();
+        } catch (e) {
+          this.log(`backup failed: ${(e as Error).message}`);
+        }
+      }, 3 * 60_000);
+      first.unref();
+      this.timers.push(first);
       this.stream?.start();
     }
   }
@@ -127,6 +148,7 @@ export class Engine {
   async seed(force = false) {
     try {
       await seedExamples(this.db, this.files, this.cfg.fixturesDir, this.log, force);
+      this.versions.ensureAll();
       this.seeded = true;
     } catch (e) {
       this.seedError = (e as Error).message;
@@ -166,6 +188,7 @@ export class Engine {
       buildOpen: buildClosedReason === null,
       buildClosedReason,
       remixOpen: this.cfg.remixOpen,
+      versionsOpen: this.cfg.versionsOpen,
       payOpen: this.payments.open && !sw.callsPaused,
       aiMode: this.cfg.aiMode,
       testMode: this.cfg.testMode,
@@ -269,7 +292,8 @@ export class Engine {
       ai: this.cfg.aiMode,
       examples: this.seeded ? 'built' : this.seedError ? `failed: ${this.seedError}` : 'building',
       payments: this.payments.open ? 'open' : 'closed: set FABRICA_OPS_WALLET and FABRICA_BURN_WALLET',
-      switches: { calls: sw.callsPaused ? 'paused' : 'on', builds: sw.buildsPaused ? 'paused' : 'on', remix: this.cfg.remixOpen ? 'on' : 'off' },
+      switches: { calls: sw.callsPaused ? 'paused' : 'on', builds: sw.buildsPaused ? 'paused' : 'on', remix: this.cfg.remixOpen ? 'on' : 'off', versions: this.cfg.versionsOpen ? 'on' : 'off' },
+      backup: this.backups.health(),
       rpc: this.rpc.label,
       rpcNodes: this.rpc instanceof HttpRpc ? this.rpc.stats.map((s, i) => ({ node: i, ok: s.ok, fail: s.fail, lastError: s.lastError })) : null,
       stream: this.stream?.status() ?? 'off',

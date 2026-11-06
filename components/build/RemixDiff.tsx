@@ -1,12 +1,14 @@
 'use client';
-// A remix's before and after: every part of the spec the change touched, the original's next to the remix's.
-// Computed from the two specs in the browser, so the maker's own edits show here as soon as they are saved.
+// Before and after: every part of the spec the change touched, the original's next to the remix's, or the live
+// version's next to the new one. Computed from the two specs in the browser, so the maker's own edits show here as
+// soon as they are saved.
 import Link from 'next/link';
 import type { AgentSpec } from '../../shared/types';
 import { specChanges } from '../../shared/remix';
 
-export function RemixDiff({ before, after, parentSlug, summary }: { before: AgentSpec; after: AgentSpec; parentSlug: string; summary: string | null }) {
+export function RemixDiff({ before, after, parentSlug, summary, labels }: { before: AgentSpec; after: AgentSpec; parentSlug: string; summary: string | null; labels?: { origin: string; before: string; after: string } }) {
   const changes = specChanges(before, after);
+  const L = labels ?? { origin: before.name, before: 'Before', after: 'After' };
   return (
     <section className="panel build-block rdiff" id="before-after">
       <div className="panel__head">
@@ -14,7 +16,7 @@ export function RemixDiff({ before, after, parentSlug, summary }: { before: Agen
         <span className="hint">
           {changes.length} {changes.length === 1 ? 'part' : 'parts'} changed from{' '}
           <Link className="link" href={`/agents/${parentSlug}`}>
-            {before.name}
+            {L.origin}
           </Link>
         </span>
       </div>
@@ -46,7 +48,7 @@ export function RemixDiff({ before, after, parentSlug, summary }: { before: Agen
               </span>
               <div className="rdiff__pair">
                 <div className="rdiff__side rdiff__side--before">
-                  <span className="rdiff__k">Before</span>
+                  <span className={`rdiff__k ${labels ? 'rdiff__k--v' : ''}`}>{L.before}</span>
                   {c.lines.filter((l) => l.op !== 'add').map((l, i) => (
                     <span key={i} className={l.op === 'del' ? 'is-gone' : ''}>
                       {l.text}
@@ -54,7 +56,7 @@ export function RemixDiff({ before, after, parentSlug, summary }: { before: Agen
                   ))}
                 </div>
                 <div className="rdiff__side rdiff__side--after">
-                  <span className="rdiff__k">After</span>
+                  <span className={`rdiff__k ${labels ? 'rdiff__k--v' : ''}`}>{L.after}</span>
                   {c.lines.filter((l) => l.op !== 'del').map((l, i) => (
                     <span key={i} className={l.op === 'add' ? 'is-new' : ''}>
                       {l.text}

@@ -15,7 +15,7 @@ One sentence in. A tested, attacked, paid-per-call agent out.
 [![Solana](https://img.shields.io/badge/Solana-USDC-0b0d10?style=flat-square&logo=solana&logoColor=white)](docs/MONEY.md)
 [![x402](https://img.shields.io/badge/payments-x402-6f84ff?style=flat-square)](#paying-for-a-call-x402)
 [![MCP](https://img.shields.io/badge/tools-MCP-6f84ff?style=flat-square)](#every-agent-is-an-mcp-tool)
-[![Tests](https://img.shields.io/badge/tests-87%20unit%20%2B%209%20e2e-2ea043?style=flat-square)](#tests)
+[![Tests](https://img.shields.io/badge/tests-105%20unit%20%2B%2011%20e2e-2ea043?style=flat-square)](#tests)
 
 [Live site](https://getfabrica.fun) · [How it works](#how-it-works) · [Architecture](#architecture) · [API](#api) · [Run it](#run-it) · [Roadmap](https://getfabrica.fun/roadmap)
 
@@ -190,6 +190,16 @@ Take any live agent, change one sentence, and Fabrica rewrites only that part, s
 
 Rules and edge cases: [docs/REMIX.md](docs/REMIX.md).
 
+## Versions and signed test reports
+
+A maker improves their own live agent with one sentence. The new version runs the full suite again, every attack included, under the same publish rule, and only then goes live. The agent keeps its page, its paid calls, its earnings and its remixes; quotes and receipts record the version they ran on. Every version has a public changelog entry and a test report signed with the server's ed25519 key, and the maker can roll back to any earlier version in one click.
+
+```bash
+npm run check:report -- https://getfabrica.fun/api/agents/<slug>/versions/1/report   # verifies the signature and the results hash
+```
+
+Rules and limits: [docs/VERSIONS.md](docs/VERSIONS.md).
+
 ## Receipts
 
 Every paid call gets a receipt signed with the server's ed25519 key. Fetch the public key and the exact signed message formats from `GET /api/receipts/key`, then verify any receipt yourself:
@@ -221,11 +231,13 @@ Public, no account needed:
 | `GET` | `/api/runs/{id}` | Live progress of a run |
 | `GET` | `/api/receipts/{id}` | One receipt and the public key |
 | `GET` | `/api/receipts/key` | The receipt key and signed message formats |
+| `GET` | `/api/agents/{slug}/versions` | Every version and its changelog entry |
+| `GET` | `/api/agents/{slug}/versions/{n}/report` | A version's signed test report |
 | `GET` | `/api/x402` | Payment details for x402 clients |
 | `GET` | `/api/token` | $FABRICA supply, burns and fees spent on buybacks |
 | `POST` | `/mcp` | MCP over streamable HTTP |
 
-Makers sign in with their wallet (`/api/auth/nonce`, `/api/auth/verify`) to build (`POST /api/build`, with `remixOf` for a remix), work on drafts (`/api/drafts/{id}/respec|tests|run|publish`), pause and resume their agents, and launch an agent coin with a public buyback meter.
+Makers sign in with their wallet (`/api/auth/nonce`, `/api/auth/verify`) to build (`POST /api/build`, with `remixOf` for a remix), improve their agents (`POST /api/agents/{slug}/versions`) and roll back, work on drafts (`/api/drafts/{id}/respec|tests|run|publish`), pause and resume their agents, and launch an agent coin with a public buyback meter.
 
 ## Run it
 
@@ -285,12 +297,12 @@ shared/         Types, models and prices, roadmap, formatting
 fixtures/       Example agents and recorded AI replies
 scripts/        Admin, load test, validator check, screenshots
 test/           unit/, integration/, e2e/
-docs/           MONEY.md, REMIX.md, SETTINGS.md
+docs/           MONEY.md, REMIX.md, VERSIONS.md, SETTINGS.md
 ```
 
 ## Roadmap
 
-Five phases, each one part of the factory: **The Factory** (live), **Remix and Versions** (Remix live), **Agent Networks**, **Beyond Text** and **Fabrica for Teams**. The full list is at [getfabrica.fun/roadmap](https://getfabrica.fun/roadmap) and in [`shared/roadmap.ts`](shared/roadmap.ts).
+Five phases, each one part of the factory: **The Factory** (live), **Remix and Versions** (live), **Agent Networks**, **Beyond Text** and **Fabrica for Teams**. The full list is at [getfabrica.fun/roadmap](https://getfabrica.fun/roadmap) and in [`shared/roadmap.ts`](shared/roadmap.ts).
 
 ## License
 

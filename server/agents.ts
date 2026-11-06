@@ -2,6 +2,7 @@
 import type { AgentPublic, AgentSpec, AgentStats, CoinInfo, HolderTier, RemixParent, TestResult, TestRunSummary, ToolName } from '../shared/types';
 import type { DB } from './db';
 import { priceFor, type FeeRules } from './pay/price';
+import type { Versions } from './versions';
 
 export interface AgentRow {
   id: string;
@@ -76,6 +77,8 @@ export function runSummary(r: TestRunRow): TestRunSummary {
 export type SortKey = 'revenue' | 'calls' | 'pass' | 'repeat' | 'new';
 
 export class AgentStore {
+  /** Set by the engine: the version record and signed reports. */
+  versions: Versions | null = null;
   constructor(
     private db: DB,
     private fees: FeeRules,
@@ -236,7 +239,16 @@ export class AgentStore {
       remixOf: this.parentOf(row),
       royaltyBps: royalty.bps,
       remixes: { count: this.remixRows(row.id).length, royaltiesMicros: this.royaltiesPaid(row.id) },
+      ...this.versionInfo(row),
     };
+  }
+
+  private versionInfo(row: AgentRow): Pick<AgentPublic, 'versionCount' | 'report'> {
+    const v = this.versions;
+    if (!v) return { versionCount: 1, report: null };
+    // An agent that predates versions (or was written straight into the table) gets its record on first read.
+    if (!v.count(row.id)) v.ensure(row);
+    return { versionCount: v.count(row.id), report: v.report(row, row.version) };
   }
 
   list(opts: { sort?: SortKey; q?: string; tool?: string; category?: string; includeRetired?: boolean } = {}): AgentPublic[] {

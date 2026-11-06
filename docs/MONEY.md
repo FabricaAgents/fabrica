@@ -95,13 +95,30 @@ for any agent; 20% of it goes to the maker of the agent it was remixed from:
 - **No royalty** when the parent is an example (it has no maker wallet) or when the remix's maker made the parent
   too. The quote then has the usual three recipients.
 - **A remix of a remix** pays its direct parent only; one royalty recipient per payment, whatever the depth.
-- **Receipts** carry `royalty` and `royaltyTo`. A receipt with a royalty is signed over
+- **Receipts** carry `royalty` and `royaltyTo`. A receipt with a royalty, signed before versions, is signed over
   `fabrica-receipt:v2|id|agent|payer|txSig|total|maker|royalty|royaltyTo|ai|platform|inputHash|outputHash|status|createdAt`;
-  one without keeps the v1 message, so every receipt signed before remixes still verifies. `/api/receipts/key`
-  returns both formats.
+  one without keeps the v1 message, so every receipt signed before remixes still verifies. Since versions every
+  receipt signs v3 (below), which carries the royalty fields too. `/api/receipts/key` returns every format.
 - **Counting.** A remix's page shows what its maker earned and what it paid in royalties; the original's page shows
   the royalties its remixes paid. Calls by the remix's maker or by the original's maker are left out of the royalty
   totals, and royalties never count toward the original's place on the leaderboard.
+
+## Versions (`server/versions.ts`, `server/calls.ts`, docs/VERSIONS.md)
+
+A version moves no money of its own and adds no recipient:
+
+- **A new version costs one ordinary build round**, the same `FABRICA_BUILD_FEE_USD` quote to `FABRICA_OPS_WALLET`
+  as a new build or a remix, with the same AI budget for the draft (90% of it) and the same top-up for more runs.
+- **A paid call runs the version it was quoted on.** The quote fixes the amounts and recipients as always and now
+  also records the version (`quotes.version`). If the maker publishes or rolls back before the payment arrives,
+  the payment still runs the quoted version, so the caller gets what was priced and the AI budget it paid for
+  matches the model and steps that run.
+- **Receipts** record the version and sign it: every receipt since versions uses
+  `fabrica-receipt:v3|id|agent|version|payer|txSig|total|maker|royalty|royaltyTo|ai|platform|inputHash|outputHash|status|createdAt`
+  (an empty `royaltyTo` when there is none). Receipts signed earlier keep v1 or v2 and still verify.
+  `/api/receipts/key` returns all three formats and the test report format.
+- **Earnings, receipts and royalties stay with the agent** across versions: they hang off the agent, not the
+  version. A rollback keeps the maker's current price; a remix's price floor holds for every version.
 
 ## No seed money, and the one honest exception
 

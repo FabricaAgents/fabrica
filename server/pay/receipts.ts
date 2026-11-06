@@ -16,10 +16,12 @@ export function receiptKeys(db: DB): nacl.SignKeyPair {
 }
 
 /**
- * What the server signs. A receipt without a royalty keeps the v1 message, so every receipt signed before remixes
- * existed still verifies; a call that paid a royalty signs v2, which adds the royalty and who received it.
+ * What the server signs. Receipts that record the agent's version (every receipt since versions) sign v3, which
+ * adds the version and always carries the royalty fields. Older receipts keep the message they were signed with:
+ * v1 without a royalty, v2 with one, so every receipt ever issued still verifies.
  */
 export function receiptMessage(r: Omit<Receipt, 'serverSig'>): string {
+  if (r.version > 0) return ['fabrica-receipt:v3', r.id, r.agentSlug, r.version, r.payer, r.txSig, r.total, r.maker, r.royalty, r.royaltyTo ?? '', r.ai, r.platform, r.inputHash, r.outputHash ?? '', r.status, r.createdAt].join('|');
   if (r.royalty > 0) return ['fabrica-receipt:v2', r.id, r.agentSlug, r.payer, r.txSig, r.total, r.maker, r.royalty, r.royaltyTo ?? '', r.ai, r.platform, r.inputHash, r.outputHash ?? '', r.status, r.createdAt].join('|');
   return ['fabrica-receipt:v1', r.id, r.agentSlug, r.payer, r.txSig, r.total, r.maker, r.ai, r.platform, r.inputHash, r.outputHash ?? '', r.status, r.createdAt].join('|');
 }
@@ -27,6 +29,7 @@ export function receiptMessage(r: Omit<Receipt, 'serverSig'>): string {
 export const RECEIPT_FORMATS = {
   v1: 'fabrica-receipt:v1|id|agent|payer|txSig|total|maker|ai|platform|inputHash|outputHash|status|createdAt',
   v2: 'fabrica-receipt:v2|id|agent|payer|txSig|total|maker|royalty|royaltyTo|ai|platform|inputHash|outputHash|status|createdAt',
+  v3: 'fabrica-receipt:v3|id|agent|version|payer|txSig|total|maker|royalty|royaltyTo|ai|platform|inputHash|outputHash|status|createdAt',
 };
 
 export function signReceipt(keys: nacl.SignKeyPair, r: Omit<Receipt, 'serverSig'>): string {
@@ -69,6 +72,7 @@ export interface ReceiptRow {
   slot: number | null;
   server_sig: string;
   created_at: number;
+  version: number;
 }
 
 export function toReceipt(row: ReceiptRow, slug: string): Receipt {
@@ -89,6 +93,7 @@ export function toReceipt(row: ReceiptRow, slug: string): Receipt {
     ms: row.ms,
     aiCostMicros: row.ai_cost,
     createdAt: row.created_at,
+    version: row.version ?? 0,
     serverSig: row.server_sig,
   };
 }

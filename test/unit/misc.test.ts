@@ -39,7 +39,7 @@ test('concurrency gates', () => {
 
 test('receipts are signed and any edit breaks the signature', () => {
   const keys = receiptKeys(openMemoryDb());
-  const r = { id: 'r_x', agentSlug: 'a', payer: 'p', txSig: 's', total: 3, maker: 1, royalty: 0, royaltyTo: null, ai: 1, platform: 1, status: 'ok' as const, inputHash: 'i', outputHash: 'o', ms: 5, aiCostMicros: 1, createdAt: 1 };
+  const r = { id: 'r_x', agentSlug: 'a', payer: 'p', txSig: 's', total: 3, maker: 1, royalty: 0, royaltyTo: null, ai: 1, platform: 1, status: 'ok' as const, inputHash: 'i', outputHash: 'o', ms: 5, aiCostMicros: 1, createdAt: 1, version: 0 };
   const serverSig = signReceipt(keys, r);
   const pub = bs58.encode(keys.publicKey);
   assert.equal(verifyReceipt(pub, { ...r, serverSig }), true);

@@ -41,6 +41,8 @@ export interface Config {
   fixturesDir: string;
   /** REMIX=off hides the Remix buttons and refuses new remixes. Live remixes keep running and paying royalties. */
   remixOpen: boolean;
+  /** VERSIONS=off refuses new versions and rollbacks. Live versions, changelogs and signed reports stay. */
+  versionsOpen: boolean;
 }
 
 const num = (v: string | undefined, d: number) => {
@@ -128,5 +130,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     burnMinMicros: Math.round(num(env.FABRICA_BURN_MIN_USD, 5) * 1e6),
     fixturesDir: path.join(process.cwd(), 'fixtures'),
     remixOpen: (str(env.REMIX) ?? 'on').toLowerCase() !== 'off',
+    versionsOpen: (str(env.VERSIONS) ?? 'on').toLowerCase() !== 'off',
   };
 }

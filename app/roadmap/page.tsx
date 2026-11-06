@@ -9,6 +9,9 @@ const LABEL: Record<PhaseState, string> = { live: 'Live', next: 'Next', planned:
 
 export default function Roadmap() {
   const live = ROADMAP.filter((p) => p.state === 'live').length;
+  const next = ROADMAP.find((p) => p.state === 'next');
+  const WORDS = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+  const liveLine = live === 1 ? 'Phase 1 is live' : `${WORDS[live] ?? live} phases are live`;
   return (
     <>
       <section className="page-head grid-bg">
@@ -17,7 +20,10 @@ export default function Roadmap() {
           <h1 className="display h1" style={{ marginTop: 18 }}>
             Five phases. One factory.
           </h1>
-          <p className="lede">Each phase builds one part of Fabrica, on top of the last. Phase {live} is live; the rest are planned, with no dates, and new phases are added as we go.</p>
+          <p className="lede">
+            Each phase builds one part of Fabrica, on top of the last. {liveLine}
+            {next ? `, ${next.name} is next` : ''}; the rest are planned, with no dates, and new phases are added as we go.
+          </p>
           <div className="hero__ctas">
             <Link className="btn btn--primary btn--lg" href="/build">
               Build an agent <IconArrow />

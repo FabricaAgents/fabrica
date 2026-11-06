@@ -32,6 +32,7 @@ Every variable the server reads. Nothing is needed to run locally: `npm run dev`
 | `FABRICA_NETWORK` | `solana` | Leave as is. |
 | `FABRICA_TEST_MODE` | empty | Pretend chain for tests. The server refuses to start with it on Railway. |
 | `REMIX` | `on` | `off` hides the Remix buttons and refuses new remixes. Live remixes keep running and paying royalties. See docs/REMIX.md. |
+| `VERSIONS` | `on` | `off` hides Improve and the rollback buttons and refuses new versions and rollbacks. Live versions, changelogs and signed reports stay. See docs/VERSIONS.md. |
 
 `FABRICA_TIERS` example (amounts in whole tokens):
 
@@ -45,6 +46,9 @@ Every variable the server reads. Nothing is needed to run locally: `npm run dev`
 ## Admin
 
 ```
+npm run admin -- backups                   # the database snapshots on the volume
+npm run admin -- backup                    # take one now
+npm run backup:pull -- ./backups           # download the newest snapshot (asks for the admin token)
 FABRICA_SITE_URL=https://getfabrica.fun FABRICA_ADMIN_TOKEN=... npm run admin -- state
 npm run admin -- pause <slug> "reason"     # no new quotes; the maker can not undo it
 npm run admin -- resume <slug>
@@ -67,3 +71,7 @@ npm run admin -- record-burn <signature>   # record a burn you made by hand from
   instructions is withheld, and a tool call that carries it is refused.
 - Daily AI caps per agent and overall; quotes stop before payment when a cap is reached.
 
+
+## Backups
+
+The server snapshots its database every day into `<FABRICA_DATA_DIR>/backups/` and keeps the newest 7; `/api/health` shows the last one. The database holds the receipt and test report signing key, so keep any downloaded copy private.

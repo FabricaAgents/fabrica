@@ -18,6 +18,8 @@
     "load": "node --import tsx scripts/load.ts",
     "shots": "node scripts/shots.mjs",
     "admin": "node --import tsx scripts/admin.ts",
+    "backup:pull": "node --import tsx scripts/backup-pull.ts",
+    "check:report": "node --import tsx scripts/check-report.ts",
     "record": "node --import tsx scripts/record-tools.ts",
     "real-test": "node --import tsx scripts/real-test.ts"
   },

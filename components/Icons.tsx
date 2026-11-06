@@ -127,3 +127,22 @@ export const IconRemix = () => (
     <path d="M6 7.7v8.6M6 10.5c0 2.2 1.6 3.5 4 3.5h3.2a2.6 2.6 0 0 0 2.6-2" />
   </svg>
 );
+export const IconVersions = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" {...P}>
+    <rect x="7.5" y="3.5" width="12" height="13" rx="2" />
+    <path d="M4.5 7.5v11a2 2 0 0 0 2 2h9" />
+    <path d="M11 9.8l2 2 3.5-3.6" />
+  </svg>
+);
+export const IconUndo = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" {...P}>
+    <path d="M9 7.5L4.5 12 9 16.5" />
+    <path d="M4.5 12h10a5 5 0 0 1 0 10h-2" />
+  </svg>
+);
+export const IconSeal = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" {...P}>
+    <path d="M12 2.8l2.2 1.6 2.7-.1.8 2.6 2.2 1.6-.9 2.5.9 2.5-2.2 1.6-.8 2.6-2.7-.1L12 19.2l-2.2-1.6-2.7.1-.8-2.6-2.2-1.6.9-2.5-.9-2.5 2.2-1.6.8-2.6 2.7.1z" />
+    <path d="M8.8 11.2l2.2 2.2 4.2-4.3" />
+  </svg>
+);

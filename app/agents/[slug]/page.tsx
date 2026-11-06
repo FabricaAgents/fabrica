@@ -4,7 +4,9 @@ import { notFound } from 'next/navigation';
 import { connection } from 'next/server';
 import { engine } from '../../../lib/server';
 import { AgentCard, StatusBadge } from '../../../components/AgentCard';
-import { ToolIcon, TOOL_LABEL, IconFlame, IconRemix, IconArrow } from '../../../components/Icons';
+import { ToolIcon, TOOL_LABEL, IconFlame, IconRemix, IconArrow, IconSeal } from '../../../components/Icons';
+import { Changelog } from '../../../components/agent/Changelog';
+import { ImproveButton } from '../../../components/agent/VersionActions';
 import { RunPanel } from '../../../components/agent/RunPanel';
 import { MakerPanel } from '../../../components/agent/MakerPanel';
 import { TestList } from '../../../components/agent/TestList';
@@ -44,6 +46,11 @@ export default async function AgentPage({ params }: { params: P }) {
   const t = a.tests;
   const canRemix = cfg.remixOpen && (a.example || a.status === 'live');
   const remixes = a.remixes.count ? e.remixesOf(slug) : [];
+  const row = e.agentRow(slug)!;
+  const versions = e.versions.list(row);
+  const changelog = e.versions.changelog(row);
+  const rollbacks = changelog.filter((c) => c.kind === 'rollback').length;
+  const report = a.report;
 
   return (
     <>
@@ -59,7 +66,10 @@ export default async function AgentPage({ params }: { params: P }) {
               <div className="agent-head__badges">
                 <StatusBadge a={a} />
                 <span className="chip">{model?.label ?? a.model}</span>
-                <span className="chip">v{a.version}</span>
+                <a className="chip chip--link" href="#versions" title="Versions and changelog">
+                  v{a.version}
+                  {a.versionCount > 1 ? ` of ${a.versionCount}` : ''}
+                </a>
               </div>
               <h1 className="display h1 agent-head__name">{a.name}</h1>
               {a.remixOf ? (
@@ -153,6 +163,7 @@ export default async function AgentPage({ params }: { params: P }) {
         <div className="wrap">
           <a href="#run">Run it</a>
           <a href="#tests">Tests</a>
+          <a href="#versions">Versions</a>
           {!a.example ? <a href="#earnings">Earnings</a> : null}
           {remixes.length ? <a href="#remixes">Remixes</a> : null}
           {a.coin ? <a href="#coin">Coin</a> : null}
@@ -173,7 +184,7 @@ export default async function AgentPage({ params }: { params: P }) {
               blocked={canRun ? null : blocked}
               sample={sampleTest ? { input: sampleTest.input, output: sampleTest.output as Record<string, unknown> } : null}
             />
-            {!a.example && a.maker ? <MakerPanel slug={a.slug} maker={a.maker} status={a.status} makerFee={a.price.maker + a.price.royalty} royalty={a.price.royalty && a.remixOf ? { amount: a.price.royalty, to: a.remixOf.name } : null} coin={a.coin} agentName={a.name} /> : null}
+            {!a.example && a.maker ? <MakerPanel slug={a.slug} maker={a.maker} status={a.status} makerFee={a.price.maker + a.price.royalty} royalty={a.price.royalty && a.remixOf ? { amount: a.price.royalty, to: a.remixOf.name } : null} coin={a.coin} agentName={a.name} versionsOpen={cfg.versionsOpen} /> : null}
           </div>
           <aside className="agent-main__side">
             <div className="panel">
@@ -276,7 +287,44 @@ export default async function AgentPage({ params }: { params: P }) {
             ) : null}
           </div>
           <p className="block-lede">Each test is a real run of this agent. Safety tests plant attacks in the input or in what a tool returns, with a fresh secret marker per run. Open any test to see its input, output, checks and tool calls.</p>
+          {report ? (
+            <div className="report-strip">
+              <span className="report-strip__seal">
+                <IconSeal />
+              </span>
+              <div>
+                <b>Signed test report, v{report.version}</b>
+                <span className="hint">
+                  Signed by Fabrica on {dateShort(report.signedAt)} over this agent, this version and these results. Anyone can check it against the key at <code>/api/receipts/key</code>.
+                </span>
+              </div>
+              <a className="btn btn--ghost btn--sm" href={`/api/agents/${a.slug}/versions/${report.version}/report`}>
+                Open the report
+              </a>
+            </div>
+          ) : null}
           <TestList results={results} />
+        </div>
+      </section>
+
+      <section className="section--tight" id="versions">
+        <div className="wrap">
+          <div className="block-head">
+            <div>
+              <span className="kicker">Versions</span>
+              <h2 className="h3" style={{ marginTop: 10 }}>
+                v{a.version} is live{a.versionCount > 1 ? `, ${a.versionCount} versions` : ', the first version'}
+                {rollbacks ? `, ${rollbacks === 1 ? 'one rollback' : `${rollbacks} rollbacks`}` : ''}
+              </h2>
+            </div>
+            {!a.example && a.maker ? <ImproveButton slug={a.slug} maker={a.maker} open={cfg.versionsOpen} version={Math.max(...versions.map((v) => v.version), a.version)} /> : null}
+          </div>
+          <p className="block-lede">
+            {a.example
+              ? 'Examples are built once by Fabrica and get no new versions. Their record is here like any agent’s, with a signed test report.'
+              : 'Its maker improves it one sentence at a time. Every version is tested again with the full suite before it goes live, keeps the same page, receipts and earnings, and carries a test report signed by Fabrica. Calls already quoted finish on the version they were quoted on.'}
+          </p>
+          <Changelog slug={a.slug} maker={a.example ? null : a.maker} versions={versions} changelog={changelog} open={cfg.versionsOpen} />
         </div>
       </section>
 

@@ -22,7 +22,7 @@ export async function handleMcp(e: Engine, msg: Rpc, ip: string, only?: string):
         protocolVersion: MCP_PROTOCOL,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'fabrica', version: '1.0.0' },
-        instructions: 'Each tool is a tested agent that is paid per call in USDC on Solana. Call a tool once without payment to get its x402 requirements, pay them with one transaction, then call again with the payment. Some agents are remixes of others: their payment has one more recipient, the original maker\'s royalty, inside the same transaction and the same price.',
+        instructions: 'Each tool is a tested agent that is paid per call in USDC on Solana. Call a tool once without payment to get its x402 requirements, pay them with one transaction, then call again with the payment. Some agents are remixes of others: their payment has one more recipient, the original maker\'s royalty, inside the same transaction and the same price. Each tool carries the signed test report of its live version in _meta["fabrica/testReport"]; check it against the key at /api/receipts/key. A paid call runs the version it was quoted on.',
       });
     case 'notifications/initialized':
     case 'notifications/cancelled':
@@ -35,10 +35,12 @@ export async function handleMcp(e: Engine, msg: Rpc, ip: string, only?: string):
         tools: agents.map((a) => ({
           name: toolName(a.slug),
           title: a.name,
-          description: `${a.tagline} Price per call: ${(a.price.total / 1e6).toFixed(4)} USDC, paid with x402 on Solana. Tests passed: ${a.tests ? `${a.tests.passed}/${a.tests.total}` : 'none'}.${a.remixOf ? ` A remix of ${a.remixOf.name}, tested from scratch${a.price.royalty ? `; ${(a.price.royalty / 1e6).toFixed(4)} USDC of the price goes to its original maker as a royalty` : ''}.` : ''}${a.remixes.count ? ` Remixed ${a.remixes.count} time${a.remixes.count === 1 ? '' : 's'}.` : ''}`,
+          description: `${a.tagline} Price per call: ${(a.price.total / 1e6).toFixed(4)} USDC, paid with x402 on Solana. Tests passed: ${a.tests ? `${a.tests.passed}/${a.tests.total}` : 'none'}.${a.remixOf ? ` A remix of ${a.remixOf.name}, tested from scratch${a.price.royalty ? `; ${(a.price.royalty / 1e6).toFixed(4)} USDC of the price goes to its original maker as a royalty` : ''}.` : ''}${a.remixes.count ? ` Remixed ${a.remixes.count} time${a.remixes.count === 1 ? '' : 's'}.` : ''} Version ${a.version}${a.report ? ', with a signed test report' : ''}.`,
           inputSchema: { ...toJsonSchema(a.input), properties: { ...(toJsonSchema(a.input).properties as object), payment: { type: 'string', description: 'The X-PAYMENT value for this call (base64). Leave out to get the price.' } } },
           outputSchema: toJsonSchema(a.output),
           annotations: { readOnlyHint: true, openWorldHint: a.tools.includes('web_fetch') },
+          // The track record travels with the tool: the live version and its signed test report.
+          _meta: { 'fabrica/version': a.version, 'fabrica/testReport': a.report, 'fabrica/versions': `${e.cfg.siteUrl}/api/agents/${a.slug}/versions` },
         })),
       });
     }

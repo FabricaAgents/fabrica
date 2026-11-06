@@ -78,6 +78,17 @@ export class View {
       return null;
     }
   }
+  /** An improvement to an agent by its own maker: the request and the live spec. */
+  versionRequest(): { change: string; spec: any } | null {
+    const first = this.messages.find((m) => m.role === 'user')?.content ?? '';
+    const m = first.match(/^Improvement request: (.*)\n\nCurrent spec:\n([\s\S]*)$/);
+    if (!m) return null;
+    try {
+      return { change: m[1].trim(), spec: JSON.parse(m[2]) };
+    } catch {
+      return null;
+    }
+  }
   specForTests(): any {
     const m = this.lastUser().match(/^Agent spec:\n([\s\S]*)$/);
     try {
@@ -211,6 +222,20 @@ export function standInRemix(change: string, spec: any) {
   return { summary: `Made a version that ${change.replace(/\.$/, '').toLowerCase()}.`, set };
 }
 
+/**
+ * A new version without a recording: the name stays, the request becomes one more rule in the instructions, and
+ * "also return/add/include X" adds an output field X, as in a remix.
+ */
+export function standInVersion(change: string, spec: any) {
+  const set: Record<string, unknown> = { systemPrompt: `${String(spec?.systemPrompt ?? '').trim()}\n\nAlso: ${change}` };
+  const also = change.match(/\balso (?:return|give|add|include|list)s? (?:a |an |the |one )?([a-z][a-z ]{2,30}?)(?:[.,;]| for | to | with |$)/i)?.[1];
+  const fieldName = also?.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 32);
+  if (fieldName && Array.isArray(spec?.output) && !spec.output.some((f: any) => f.name === fieldName)) {
+    set.output = [...spec.output, { name: fieldName, type: 'text', description: also!.trim(), required: true }];
+  }
+  return { summary: `This version ${change.replace(/\.$/, '').replace(/^./, (c) => c.toLowerCase())}.`, set };
+}
+
 /** Values that fit a field, for stand-in tests. The text-like field carries the request. */
 function standInValue(f: any, text: string): unknown {
   if (f.enum?.length) return f.enum[0];
@@ -236,6 +261,10 @@ function standIn(v: View): FakeTurn {
     case 'remix': {
       const r = v.remixRequest();
       return { text: JSON.stringify(standInRemix(r?.change ?? 'Answer more briefly', r?.spec)) };
+    }
+    case 'version': {
+      const r = v.versionRequest();
+      return { text: JSON.stringify(standInVersion(r?.change ?? 'Answer more briefly', r?.spec)) };
     }
     case 'tests': {
       const spec = v.specForTests();

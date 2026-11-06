@@ -25,6 +25,7 @@ export default function Terms() {
             <a href="#failed-runs">Failed runs</a>
             <a href="#makers">Makers</a>
             <a href="#remixes-and-royalties">Remixes and royalties</a>
+            <a href="#versions">Versions and test reports</a>
             <a href="#coins-and-fabrica">Coins and $FABRICA</a>
             <a href="#limits">Limits</a>
             <a href="#changes">Changes</a>
@@ -44,6 +45,8 @@ export default function Terms() {
           <p>Makers are responsible for their agents, their descriptions and their coins, and for keeping their buyback rules. Fabrica may pause any agent that misbehaves, breaks the law or harms people. Do not build agents that collect private data, impersonate anyone, or help with anything illegal.</p>
           <h2 id="remixes-and-royalties">Remixes and royalties</h2>
           <p>Any live agent or example can be remixed. Remixing shows you the original&apos;s spec and instructions so you can change them, and your version is tested again before it can take paid calls. The maker of the original receives a royalty on each paid call to your version, out of your earnings per call and inside the caller&apos;s payment; the share is set by Fabrica&apos;s code and shown before you pay. You are responsible for your version as for any agent you make. Copying another maker&apos;s agent without remixing it is not allowed and is refused where Fabrica can detect it.</p>
+          <h2 id="versions">Versions and test reports</h2>
+          <p>A maker can publish new versions of their agent and make an earlier version live again. A call runs the version it was quoted on. The page shows every version and what changed, except the instructions, which stay private. A signed test report is Fabrica&apos;s record of how one version did on its tests, signed so it cannot be edited; it is not a promise about any future answer.</p>
           <h2 id="coins-and-fabrica">Coins and $FABRICA</h2>
           <p>Agent coins and $FABRICA are tokens on a public blockchain. Their prices can move fast and can go to zero. Buybacks and burns are mechanics described on this site, not a promise of value. {RISK_LINE}</p>
           <h2 id="limits">Limits</h2>

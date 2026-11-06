@@ -1,4 +1,5 @@
 // The shapes shared by the server, the pages and the browser. Kept by hand; there is no codegen.
+import type { TestReport, VersionChange, VersionKind } from './versions';
 
 export const TOOL_NAMES = ['web_fetch', 'code_run', 'solana_read', 'file_output'] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -196,6 +197,34 @@ export interface AgentPublic {
   royaltyBps: number;
   /** Live remixes of this agent and the royalties they paid its maker (calls by other wallets only). */
   remixes: { count: number; royaltiesMicros: number };
+  /** How many versions the agent has had; `version` is the one live now. */
+  versionCount: number;
+  /** The live version's test results, signed by Fabrica, or null for an agent never tested. */
+  report: TestReport | null;
+}
+
+/** One version of an agent as the public changelog shows it. */
+export interface VersionPublic {
+  version: number;
+  kind: VersionKind;
+  /** The sentence that made this version: the build sentence for v1, the improvement for later ones. */
+  sentence: string | null;
+  summary: string | null;
+  /** The version it was made from, for an improvement. */
+  baseVersion: number | null;
+  changes: VersionChange[];
+  tests: TestRunSummary | null;
+  createdAt: number;
+  live: boolean;
+  reportUrl: string;
+}
+
+/** A line in the changelog: a version that went live, or a rollback to an earlier one. */
+export interface ChangelogEntry {
+  kind: 'published' | 'rollback';
+  version: number;
+  fromVersion: number | null;
+  at: number;
 }
 
 export interface RemixParent {
@@ -234,6 +263,8 @@ export interface Receipt {
   ms: number;
   aiCostMicros: number;
   createdAt: number;
+  /** The version of the agent that ran this call, 0 for receipts from before versions were recorded. */
+  version: number;
   serverSig: string;
 }
 
@@ -287,6 +318,8 @@ export interface SiteConfig {
   buildClosedReason: string | null;
   /** Whether new remixes can be started (REMIX=off closes them; existing remixes keep paying royalties). */
   remixOpen: boolean;
+  /** Whether makers can start new versions and roll back (VERSIONS=off closes both; changelogs and reports stay). */
+  versionsOpen: boolean;
   payOpen: boolean;
   aiMode: 'openrouter' | 'fake' | 'offline';
   testMode: boolean;

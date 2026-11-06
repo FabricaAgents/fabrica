@@ -19,12 +19,17 @@ import type { AgentRow, SortKey } from '../agents';
 import { priceFor } from '../pay/price';
 import { RECEIPT_FORMATS } from '../pay/receipts';
 import { copiedFrom, remixProblems, remixRefusal } from '../remix';
+import { TEST_REPORT_FORMAT, VersionError, versionProblems, versionRefusal } from '../versions';
+import { reportMessage, VERSION_LIMITS } from '../../shared/versions';
+import fs from 'node:fs';
+import { tx } from '../db';
 
 class HttpError extends Error {
   constructor(
     public status: number,
     message: string,
     public code = 'error',
+    public extra: Record<string, unknown> = {},
   ) {
     super(message);
   }
@@ -304,14 +309,88 @@ export function createHandler(e: Engine) {
         const list = e.listAgents({}).filter((a) => a.status === 'live');
         return json(200, { x402Version: 1, items: list.map((a) => ({ resource: `${e.cfg.siteUrl}/api/agents/${a.slug}/run`, type: 'http', method: 'POST', scheme: 'split', network: e.cfg.network, asset: e.cfg.usdcMint, maxAmountRequired: String(a.price.total), description: a.tagline })) }), true;
       }
-      const agentM = p.match(/^\/api\/agents\/([a-z0-9-]{1,60})(?:\/(tests|receipts|earnings|remixes|run|pause|resume|coin\/prepare|coin\/confirm|buyback|buyback\/tx|buyback\/confirm|burn\/confirm))?$/);
+      // ---------------------------------------------------------------- versions, the changelog and signed test reports
+      const verM = p.match(/^\/api\/agents\/([a-z0-9-]{1,60})\/versions(?:\/(\d{1,4})(\/report)?)?$/);
+      if (verM) {
+        const row = e.agents.row(verM[1]);
+        if (!row || row.status === 'retired') throw new HttpError(404, 'No such agent.');
+        e.versions.ensure(row);
+        const n = verM[2] ? Number(verM[2]) : null;
+        if (m === 'GET' && n === null) {
+          return json(200, { slug: row.slug, live: row.version, versions: e.versions.list(row), changelog: e.versions.changelog(row), open: e.cfg.versionsOpen, limits: VERSION_LIMITS }), true;
+        }
+        if (m === 'GET' && n !== null) {
+          const v = e.versions.row(row.id, n);
+          if (!v) throw new HttpError(404, `There is no version ${n} of this agent.`);
+          const report = e.versions.report(row, n);
+          const results = e.versions.results(row, n);
+          if (verM[3]) {
+            if (!report) throw new HttpError(404, `Version ${n} has no test report.`);
+            const { format: _f, signature: _s, ...body } = report;
+            return json(200, { report, message: reportMessage(body), format: TEST_REPORT_FORMAT, publicKey: bs58.encode(e.receiptKeys.publicKey), results }), true;
+          }
+          const spec = JSON.parse(v.spec) as AgentSpec;
+          // Only what every buyer could see while it was live: never the instructions.
+          const pub = { name: spec.name, tagline: spec.tagline, brief: spec.brief, category: spec.category, model: spec.model, tools: Object.keys(spec.tools), toolConfig: spec.tools, input: spec.input, output: spec.output, examples: spec.examples, limits: spec.limits };
+          return json(200, { ...e.versions.publicOf(row, v), agent: pub, report, results }), true;
+        }
+        if (m === 'POST' && n === null) {
+          const w = maker(req);
+          sameOrigin(req);
+          buildRoom();
+          const mine = agentSpecOf(row.slug, w);
+          const b = await readBody(req);
+          let sentence: string;
+          try {
+            sentence = checkSentence(b.sentence);
+          } catch (err) {
+            throw new HttpError(400, (err as SpecError).problems.join('; '));
+          }
+          const header = String(req.headers['x-payment'] ?? req.headers['payment-signature'] ?? '') || undefined;
+          if (!header) {
+            // Checked before the quote, so nobody pays for a refusal. A payment already made is honoured even if the
+            // switch was turned off since.
+            if (!e.cfg.versionsOpen) throw new HttpError(503, 'New versions are paused for now. Live agents keep working.', 'closed');
+            const no = versionRefusal(e.versions, (id) => e.drafts.openImprove(id, Date.now(), VERSION_LIMITS.openDraftIdleMs), mine);
+            if (no) throw new HttpError(no.status, no.message, 'version_refused', no.draftId ? { draftId: no.draftId } : {});
+            limit(`build:${w}`, LIMITS.buildPerHour, 3_600_000);
+            const fee = Math.max(0, Math.round(e.cfg.buildFeeMicros * (1 - (e.tierFor(w).buildDiscountBps ?? 0) / 10_000)));
+            const spec = e.agents.spec(mine);
+            const req402 = await e.payments.makeQuote({
+              kind: 'build',
+              maker: w,
+              meta: { sentence, improve: mine.id, fromVersion: mine.version },
+              price: { total: fee, maker: 0, royalty: 0, ai: fee, platform: 0 },
+              ip,
+              resource: `${e.cfg.siteUrl}/api/agents/${mine.slug}/versions`,
+              description: `One build round for a new version of ${spec.name}: the change, tests and up to three test runs`,
+            });
+            return json(402, { x402Version: 1, error: 'Payment required', accepts: [req402] }), true;
+          }
+          try {
+            const s = await e.payments.settle(header, (q) => {
+              const meta = q.meta ? JSON.parse(q.meta) : {};
+              if (q.kind !== 'build' || q.maker !== w || meta.improve !== mine.id || meta.sentence !== sentence) throw new PaymentError('mismatch', 'That payment was for something else.', 409);
+            });
+            const fresh = e.agents.row(mine.id)!;
+            const id = e.drafts.create(w, sentence, s.sig, e.cfg.buildAiBudgetMicros, undefined, undefined, { agentId: fresh.id, spec: e.agents.spec(fresh), version: fresh.version });
+            void e.drafts.buildSpec(id);
+            return json(201, { draftId: id }), true;
+          } catch (err) {
+            if (err instanceof PaymentError) throw new HttpError(err.status, err.message, err.code);
+            throw err;
+          }
+        }
+        throw new HttpError(405, 'Method not allowed.');
+      }
+      const agentM = p.match(/^\/api\/agents\/([a-z0-9-]{1,60})(?:\/(tests|receipts|earnings|remixes|run|pause|resume|rollback|coin\/prepare|coin\/confirm|buyback|buyback\/tx|buyback\/confirm|burn\/confirm))?$/);
       if (agentM) {
         const slug = agentM[1];
         const action = agentM[2];
         if (!action && m === 'GET') {
           const a = e.agent(slug);
           if (!a) throw new HttpError(404, 'No such agent.');
-          return json(200, { ...a, endpoint: `${e.cfg.siteUrl}/api/agents/${a.slug}/run`, mcp: `${e.cfg.siteUrl}/mcp/agents/${a.slug}` }), true;
+          return json(200, { ...a, endpoint: `${e.cfg.siteUrl}/api/agents/${a.slug}/run`, mcp: `${e.cfg.siteUrl}/mcp/agents/${a.slug}`, versions: `${e.cfg.siteUrl}/api/agents/${a.slug}/versions` }), true;
         }
         if (action === 'tests' && m === 'GET') return json(200, { results: e.agentTests(slug) }), true;
         if (action === 'receipts' && m === 'GET') return json(200, { receipts: e.receipts(slug, Number(url.searchParams.get('limit') ?? 25), url.searchParams.get('before') ? Number(url.searchParams.get('before')) : undefined) }), true;
@@ -339,6 +418,16 @@ export function createHandler(e: Engine) {
             if (action === 'resume' && kvGet(e.db, `adminpause:${row.id}`)) throw new HttpError(403, 'Fabrica paused this agent. It cannot be resumed from here.');
             return json(200, e.setAgentPaused(slug, action === 'pause', action === 'pause' ? 'Paused by its maker' : null, w)), true;
           }
+          if (action === 'rollback' && m === 'POST') {
+            if (!e.cfg.versionsOpen) throw new HttpError(503, 'Rollbacks are paused for now. The live version keeps working.', 'closed');
+            const row = agentSpecOf(slug, w);
+            if (row.status === 'retired') throw new HttpError(404, 'No such agent of yours.');
+            const to = Number(b.version);
+            if (!Number.isInteger(to) || to < 1) throw new HttpError(400, 'Name the version to roll back to: {"version": 1}.');
+            e.versions.ensure(row);
+            e.versions.rollback(row, to, w);
+            return json(200, { ...e.agent(slug), changelog: e.versions.changelog(e.agents.row(slug)!) }), true;
+          }
           if (action === 'coin/prepare' && m === 'POST') return json(200, e.coins.prepare(slug, w, b)), true;
           if (action === 'coin/confirm' && m === 'POST') return json(200, await e.coins.confirmLaunch(slug, w, String(b.signature ?? ''), String(b.mint ?? ''))), true;
           if (action === 'buyback' && m === 'POST') return json(200, e.coins.setBuyback(slug, w, Number(b.bps))), true;
@@ -347,6 +436,7 @@ export function createHandler(e: Engine) {
           if (action === 'burn/confirm' && m === 'POST') return json(200, await e.coins.confirmBurn(slug, w, String(b.signature ?? ''))), true;
         } catch (err) {
           if (err instanceof CoinError) throw new HttpError(err.status, err.message);
+          if (err instanceof VersionError) throw new HttpError(err.status, err.message, 'version_refused');
           throw err;
         }
         throw new HttpError(405, 'Method not allowed.');
@@ -359,7 +449,7 @@ export function createHandler(e: Engine) {
         if (!r) throw new HttpError(404, 'No such receipt.');
         return json(200, { receipt: r, publicKey: bs58.encode(e.receiptKeys.publicKey) }), true;
       }
-      if (p === '/api/receipts/key' && m === 'GET') return json(200, { publicKey: bs58.encode(e.receiptKeys.publicKey), message: RECEIPT_FORMATS.v1, messageWithRoyalty: RECEIPT_FORMATS.v2 }), true;
+      if (p === '/api/receipts/key' && m === 'GET') return json(200, { publicKey: bs58.encode(e.receiptKeys.publicKey), message: RECEIPT_FORMATS.v1, messageWithRoyalty: RECEIPT_FORMATS.v2, messageWithVersion: RECEIPT_FORMATS.v3, testReport: TEST_REPORT_FORMAT }), true;
       if (p === '/api/token' && m === 'GET') return json(200, { launched: Boolean(e.cfg.mint), stats: await e.token.stats() }), true;
 
       // ---------------------------------------------------------------- MCP
@@ -431,6 +521,28 @@ export function createHandler(e: Engine) {
           audit(e.db, 'admin', 'switch', b);
           return json(200, e.health().switches), true;
         }
+        if (p === '/api/admin/backups' && m === 'GET') return json(200, { backups: e.backups.list(), health: e.backups.health() }), true;
+        if (p === '/api/admin/backups' && m === 'POST') {
+          audit(e.db, 'admin', 'backup', {});
+          return json(201, e.backups.run()), true;
+        }
+        const bm = p.match(/^\/api\/admin\/backups\/(latest|fabrica-\d{8}-\d{6}\.db)$/);
+        if (bm && m === 'GET') {
+          const info = bm[1] === 'latest' ? e.backups.list()[0] : e.backups.list().find((x) => x.file === bm[1]);
+          const file = info ? e.backups.path(info.file) : null;
+          if (!info || !file) throw new HttpError(404, 'No backup yet.');
+          res.writeHead(200, {
+            'content-type': 'application/vnd.sqlite3',
+            'content-length': String(fs.statSync(file).size),
+            'content-disposition': `attachment; filename="${info.file}"`,
+            'x-backup-file': info.file,
+            'x-backup-sha256': info.sha256,
+            'cache-control': 'no-store',
+            'x-content-type-options': 'nosniff',
+          });
+          await new Promise<void>((resolve, reject) => fs.createReadStream(file).on('error', reject).on('end', resolve).pipe(res));
+          return true;
+        }
         if (p === '/api/admin/burn' && m === 'POST') return json(200, { result: await e.token.burnTick() }), true;
         if (p === '/api/admin/record-burn' && m === 'POST') {
           try {
@@ -462,7 +574,7 @@ export function createHandler(e: Engine) {
       throw new HttpError(404, 'Not found.');
     } catch (err) {
       if (err instanceof HttpError) {
-        json(err.status, { error: err.code, message: err.message }, err.status === 429 ? { 'retry-after': '60' } : {});
+        json(err.status, { error: err.code, message: err.message, ...err.extra }, err.status === 429 ? { 'retry-after': '60' } : {});
         return true;
       }
       e.log(`api ${m} ${p} failed: ${(err as Error).stack ?? err}`);
@@ -511,12 +623,26 @@ function publish(e: Engine, draftId: string, wallet: string) {
   };
   if (d.agent_id) {
     const row = e.agents.row(d.agent_id);
-    if (!row || row.maker !== wallet) throw new HttpError(404, 'No such agent of yours.');
+    if (!row || row.maker !== wallet || row.status === 'retired') throw new HttpError(404, 'No such agent of yours.');
+    e.versions.ensure(row);
     // A new version keeps its lineage, its royalty and its price floor.
     if (v.spec.makerFee < row.fee_floor) throw new HttpError(409, `A remix earns at least what the original earned per call when it went live (${row.fee_floor / 1e6} USDC). Raise the earnings in the spec.`);
+    if (v.improve) {
+      const problems = versionProblems(v.improve.before, v.spec, row.fee_floor);
+      if (problems.length) throw new HttpError(409, `${problems.join('; ')}.`.replace(/^./, (c) => c.toUpperCase()));
+    }
+    if (e.versions.count(row.id) >= VERSION_LIMITS.maxVersions) throw new HttpError(409, `An agent can have ${VERSION_LIMITS.maxVersions} versions.`, 'version_refused');
+    if (e.versions.publishedToday(row.id) >= VERSION_LIMITS.perDay) throw new HttpError(429, `An agent can get ${VERSION_LIMITS.perDay} new versions in 24 hours. This draft stays ready; publish it later.`, 'version_refused');
     copyRefusal(copiedFrom(e.agents, others, v.spec, wallet, row, e.agents.lineage(row)));
-    e.db.prepare('UPDATE agents SET spec = ?, version = version + 1, test_run_id = ?, draft_id = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(v.spec), v.run.id, d.id, now, row.id);
-    e.db.prepare('UPDATE test_runs SET agent_id = ? WHERE id = ?').run(row.id, v.run.id);
+    const live = e.agents.spec(row);
+    const spec = { ...v.spec, slug: row.slug };
+    tx(e.db, () => {
+      // The number is read inside the transaction, so two publishes can never take the same one.
+      const next = e.versions.nextNumber(row.id, row.version);
+      e.db.prepare('UPDATE agents SET spec = ?, version = ?, test_run_id = ?, draft_id = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(spec), next, v.run!.id, d.id, now, row.id);
+      e.db.prepare('UPDATE test_runs SET agent_id = ? WHERE id = ?').run(row.id, v.run!.id);
+      e.versions.record(row, { version: next, spec, testRunId: v.run!.id, draftId: d.id, kind: v.improve ? 'improve' : 'edit', sentence: v.improve ? d.sentence : null, summary: v.improve?.summary ?? null, baseVersion: v.improve?.fromVersion ?? row.version, before: v.improve?.before ?? live, maker: wallet, at: now, fromVersion: row.version });
+    });
     e.drafts.markPublished(d.id, row.id);
     return e.agent(row.slug);
   }
@@ -534,11 +660,14 @@ function publish(e: Engine, draftId: string, wallet: string) {
   for (let i = 2; e.agents.row(slug); i++) slug = `${v.spec.slug}-${i}`.slice(0, 60);
   const id = e.newId('a');
   const spec = { ...v.spec, slug };
-  e.db
-    .prepare('INSERT INTO agents (id, slug, maker, status, example, spec, version, test_run_id, draft_id, published_at, updated_at, sentence, parent_id, royalty_bps, fee_floor) VALUES (?, ?, ?, ?, 0, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, slug, wallet, 'live', JSON.stringify(spec), v.run.id, d.id, now, now, d.sentence, parent?.id ?? null, v.remix?.royaltyBps ?? 0, v.remix?.feeFloor ?? 0);
+  tx(e.db, () => {
+    e.db
+      .prepare('INSERT INTO agents (id, slug, maker, status, example, spec, version, test_run_id, draft_id, published_at, updated_at, sentence, parent_id, royalty_bps, fee_floor) VALUES (?, ?, ?, ?, 0, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, slug, wallet, 'live', JSON.stringify(spec), v.run!.id, d.id, now, now, d.sentence, parent?.id ?? null, v.remix?.royaltyBps ?? 0, v.remix?.feeFloor ?? 0);
+    e.db.prepare('UPDATE test_runs SET agent_id = ? WHERE id = ?').run(id, v.run!.id);
+    e.versions.record({ id, slug }, { version: 1, spec, testRunId: v.run!.id, draftId: d.id, kind: parent ? 'remix' : 'build', sentence: d.sentence, summary: v.remix?.summary ?? null, baseVersion: null, before: null, maker: wallet, at: now });
+  });
   if (parent) audit(e.db, wallet, 'remix', { agent: slug, parent: parent.slug, royaltyBps: v.remix?.royaltyBps ?? 0 });
-  e.db.prepare('UPDATE test_runs SET agent_id = ? WHERE id = ?').run(id, v.run.id);
   e.drafts.markPublished(d.id, id);
   return e.agent(slug);
 }

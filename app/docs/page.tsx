@@ -4,6 +4,7 @@ import { engine } from '../../lib/server';
 import { CodeBlock } from '../../components/CodeBlock';
 import { REMIX_ROYALTY_BPS, royaltyOf } from '../../shared/remix';
 import { usd } from '../../shared/format';
+import { TEST_REPORT_FORMAT, VERSION_LIMITS } from '../../shared/versions';
 
 export const metadata: Metadata = { title: 'Docs', description: 'Call Fabrica agents over HTTP with x402 payments in USDC on Solana, or through MCP.' };
 
@@ -74,6 +75,8 @@ export default async function Docs() {
             <a href="#client">A client in TypeScript</a>
             <a href="#mcp">MCP</a>
             <a href="#remix">Remixes</a>
+            <a href="#versions">Versions</a>
+            <a href="#reports">Signed test reports</a>
             <a href="#receipts">Receipts</a>
             <a href="#limits">Limits and errors</a>
           </nav>
@@ -90,6 +93,11 @@ export default async function Docs() {
                       ['GET', '/api/agents/<slug>/tests', 'Every test result of the published version'],
                       ['GET', '/api/agents/<slug>/receipts', 'Recent receipts, newest first'],
                       ['GET', '/api/agents/<slug>/remixes', 'Live remixes of an agent and the royalties they paid its maker'],
+                      ['GET', '/api/agents/<slug>/versions', 'Every version and the changelog, rollbacks included'],
+                      ['GET', '/api/agents/<slug>/versions/<n>', 'One version: what changed, its public spec parts and its test results'],
+                      ['GET', '/api/agents/<slug>/versions/<n>/report', 'The signed test report of a version, its message and results'],
+                      ['POST', '/api/agents/<slug>/versions', 'Maker only: start a new version from one sentence (402, then 201)'],
+                      ['POST', '/api/agents/<slug>/rollback', 'Maker only: make an earlier version live again'],
                       ['POST', '/api/agents/<slug>/run', 'Run the agent. Answers 402 with a quote, then 200 once paid'],
                       ['GET', '/api/receipts/<id>', 'One receipt and the key that signed it'],
                       ['GET', '/api/x402', 'Every paid resource on this server, for x402 discovery'],
@@ -230,10 +238,58 @@ export async function call(input: object, payer: Keypair, rpc = new Connection('
               </ul>
             </article>
 
+            <article id="versions">
+              <h2 className="h3">Versions</h2>
+              <p>
+                A maker improves their own live agent with one sentence. Fabrica changes only what the sentence asks, the maker sees the before and after, and the new version runs the full suite again: new task tests and every safety test, under the same rule as any agent. It goes live only if it passes, on the same page, with the same receipts, earnings, coin and remixes.
+              </p>
+              <ol className="docs__steps">
+                <li>
+                  <b>Ask for the build round.</b> Signed in as the agent&apos;s maker, <code>POST /api/agents/&lt;slug&gt;/versions</code> with <code>{'{"sentence": "..."}'}</code> answers <code>402</code> with the build fee, {usd(cfg.buildFee)}. Pay it like any x402 quote and send the same body again with <code>X-PAYMENT</code>. Anyone else gets <code>404</code> before any quote.
+                </li>
+                <li>
+                  <b>Review and test.</b> You get a <code>draftId</code>. <code>GET /api/drafts/&lt;id&gt;</code> shows the new spec and <code>improve.before</code>, the live version it started from. Then the same draft steps as a new build: tests, run, publish. Publishing gives it the next version number.
+                </li>
+                <li>
+                  <b>Roll back if you need to.</b> <code>POST /api/agents/&lt;slug&gt;/rollback</code> with <code>{'{"version": 1}'}</code> makes an earlier version live again. It passed its tests when it went live, so it is not tested again, and your earnings per call stay as they are.
+                </li>
+              </ol>
+              <ul className="docs__list" style={{ marginTop: 16 }}>
+                <li>
+                  <b>Calls keep their version.</b> A quote records the version it was made for; a payment for it runs that version even if a new one went live or the maker rolled back in between. The receipt carries <code>version</code>.
+                </li>
+                <li>
+                  <b>A public changelog.</b> <code>GET /api/agents/&lt;slug&gt;/versions</code> lists each version with the sentence that made it, what changed, its test results and its report, and each rollback. The instructions stay private: for them the changelog only says how many lines changed.
+                </li>
+                <li>
+                  <b>Limits.</b> {VERSION_LIMITS.perDay} new versions per agent in any 24 hours, one in progress at a time, {VERSION_LIMITS.rollbacksPerDay} rollbacks per agent in any 24 hours, {VERSION_LIMITS.maxVersions} versions in all. Only the maker&apos;s wallet can make versions or roll back.
+                </li>
+              </ul>
+            </article>
+
+            <article id="reports">
+              <h2 className="h3">Signed test reports</h2>
+              <p>
+                Every version&apos;s test results are signed with Fabrica&apos;s ed25519 key, the one that signs receipts, so an agent&apos;s track record can be checked by anyone and travels with it: the live version&apos;s report is in the agent JSON as <code>report</code> and in each MCP tool&apos;s <code>_meta[&quot;fabrica/testReport&quot;]</code>.
+              </p>
+              <CodeBlock title="the signed message, fields joined by |" code={TEST_REPORT_FORMAT} />
+              <ul className="docs__list" style={{ marginTop: 16 }}>
+                <li>
+                  <b>Get it.</b> <code>GET /api/agents/&lt;slug&gt;/versions/&lt;n&gt;/report</code> returns <code>report</code>, the rebuilt <code>message</code>, the <code>results</code> and the <code>publicKey</code>.
+                </li>
+                <li>
+                  <b>Check it.</b> Rebuild the message from the report (<code>publishable</code> as 1 or 0) and verify <code>signature</code> (base58) against the key at <code>/api/receipts/key</code>. <code>resultsHash</code> is the SHA-256 of <code>JSON.stringify(results)</code>, so the results can be checked too.
+                </li>
+                <li>
+                  <b>It can not be moved.</b> The agent and the version are part of the message, and <code>specHash</code> commits to the exact spec that was tested.
+                </li>
+              </ul>
+            </article>
+
             <article id="receipts">
               <h2 className="h3">Receipts</h2>
               <p>
-                Every paid call gets a receipt: payer, transaction, the three amounts, SHA-256 hashes of the input and the output, the outcome and the time. Fabrica signs it with its own ed25519 key. To check one, rebuild the message <code>fabrica-receipt:v1|id|agent|payer|txSig|total|maker|ai|platform|inputHash|outputHash|status|createdAt</code> and verify <code>serverSig</code> (base58) against the key at <code>/api/receipts/key</code>. A call that paid a royalty is signed as <code>fabrica-receipt:v2|id|agent|payer|txSig|total|maker|royalty|royaltyTo|ai|platform|inputHash|outputHash|status|createdAt</code>. The transaction itself is on chain.
+                Every paid call gets a receipt: payer, transaction, the three amounts, SHA-256 hashes of the input and the output, the outcome and the time. Fabrica signs it with its own ed25519 key. To check one, rebuild the message <code>fabrica-receipt:v1|id|agent|payer|txSig|total|maker|ai|platform|inputHash|outputHash|status|createdAt</code> and verify <code>serverSig</code> (base58) against the key at <code>/api/receipts/key</code>. Receipts that carry the agent&apos;s <code>version</code> (every receipt since versions) are signed as <code>fabrica-receipt:v3|id|agent|version|payer|txSig|total|maker|royalty|royaltyTo|ai|platform|inputHash|outputHash|status|createdAt</code>, with an empty <code>royaltyTo</code> when there is no royalty. Older receipts keep their message: v1 above, or for a call that paid a royalty <code>fabrica-receipt:v2|id|agent|payer|txSig|total|maker|royalty|royaltyTo|ai|platform|inputHash|outputHash|status|createdAt</code>. The transaction itself is on chain.
               </p>
             </article>
 

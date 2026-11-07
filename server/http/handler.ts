@@ -383,7 +383,7 @@ export function createHandler(e: Engine) {
         }
         throw new HttpError(405, 'Method not allowed.');
       }
-      const agentM = p.match(/^\/api\/agents\/([a-z0-9-]{1,60})(?:\/(tests|receipts|earnings|remixes|run|pause|resume|rollback|coin\/prepare|coin\/confirm|buyback|buyback\/tx|buyback\/confirm|burn\/confirm))?$/);
+      const agentM = p.match(/^\/api\/agents\/([a-z0-9-]{1,60})(?:\/(tests|receipts|trees|earnings|remixes|run|pause|resume|rollback|coin\/prepare|coin\/confirm|buyback|buyback\/tx|buyback\/confirm|burn\/confirm))?$/);
       if (agentM) {
         const slug = agentM[1];
         const action = agentM[2];
@@ -395,6 +395,11 @@ export function createHandler(e: Engine) {
         if (action === 'tests' && m === 'GET') return json(200, { results: e.agentTests(slug) }), true;
         if (action === 'receipts' && m === 'GET') return json(200, { receipts: e.receipts(slug, Number(url.searchParams.get('limit') ?? 25), url.searchParams.get('before') ? Number(url.searchParams.get('before')) : undefined) }), true;
         if (action === 'earnings' && m === 'GET') return json(200, { days: e.earningsSeries(slug) }), true;
+        if (action === 'trees' && m === 'GET') {
+          const row = e.agents.row(slug);
+          if (!row || row.status === 'retired') throw new HttpError(404, 'No such agent.');
+          return json(200, { trees: e.networks.recentTrees(row, Math.min(Number(url.searchParams.get('limit') ?? 5) || 5, 20)) }), true;
+        }
         if (action === 'remixes' && m === 'GET') {
           const row = e.agents.row(slug);
           if (!row || row.status === 'retired') throw new HttpError(404, 'No such agent.');
@@ -443,13 +448,19 @@ export function createHandler(e: Engine) {
       }
       const progM = p.match(/^\/api\/runs\/([0-9a-f]{24})$/);
       if (progM && m === 'GET') return json(200, e.calls.progressOf(progM[1]) ?? { stage: 'unknown', events: [] }), true;
-      const recM = p.match(/^\/api\/receipts\/(r_[A-Za-z0-9_-]{12})$/);
+      const recM = p.match(/^\/api\/receipts\/([rh]_[A-Za-z0-9_-]{12})(\/tree)?$/);
       if (recM && m === 'GET') {
+        if (recM[2]) {
+          // The whole tree a receipt belongs to: every paid slot, who was paid, and the hired calls with their receipts.
+          const tree = e.networks.tree(recM[1]);
+          if (!tree) throw new HttpError(404, 'No such receipt.');
+          return json(200, { ...tree, publicKey: bs58.encode(e.receiptKeys.publicKey), format: RECEIPT_FORMATS.v4 }), true;
+        }
         const r = e.receipt(recM[1]);
         if (!r) throw new HttpError(404, 'No such receipt.');
-        return json(200, { receipt: r, publicKey: bs58.encode(e.receiptKeys.publicKey) }), true;
+        return json(200, { receipt: r, publicKey: bs58.encode(e.receiptKeys.publicKey), ...((r.depth ?? 0) > 0 ? { tree: `${e.cfg.siteUrl}/api/receipts/${r.rootId ?? r.id}/tree` } : {}) }), true;
       }
-      if (p === '/api/receipts/key' && m === 'GET') return json(200, { publicKey: bs58.encode(e.receiptKeys.publicKey), message: RECEIPT_FORMATS.v1, messageWithRoyalty: RECEIPT_FORMATS.v2, messageWithVersion: RECEIPT_FORMATS.v3, testReport: TEST_REPORT_FORMAT }), true;
+      if (p === '/api/receipts/key' && m === 'GET') return json(200, { publicKey: bs58.encode(e.receiptKeys.publicKey), message: RECEIPT_FORMATS.v1, messageWithRoyalty: RECEIPT_FORMATS.v2, messageWithVersion: RECEIPT_FORMATS.v3, messageWithHires: RECEIPT_FORMATS.v4, testReport: TEST_REPORT_FORMAT }), true;
       if (p === '/api/token' && m === 'GET') return json(200, { launched: Boolean(e.cfg.mint), stats: await e.token.stats() }), true;
 
       // ---------------------------------------------------------------- MCP
@@ -589,7 +600,23 @@ function viewWithPrice(e: Engine, row: NonNullable<ReturnType<Engine['drafts']['
   // A remix shows the royalty it will pay; a new version of a remix keeps paying its own.
   const live = row.agent_id ? e.agents.row(row.agent_id) : null;
   const royaltyBps = v.remix?.royaltyBps ?? (live ? e.agents.royalty(live).bps : 0);
-  return { ...v, price: v.spec ? priceFor(v.spec, e.cfg, e.tierFor(wallet), royaltyBps) : null, buildFee: e.cfg.buildFeeMicros };
+  const price = v.spec ? priceFor(v.spec, e.cfg, e.tierFor(wallet), royaltyBps) : null;
+  // A draft that hires: the price a caller will see, its hires included, and anything that stops it.
+  let network: { hiresTotal: number; slots: number; budget: number; problems: string[] } | null = null;
+  if (v.spec?.tools.hire_agent && price) {
+    const problems = e.networks.problems(v.spec, { selfSlug: live?.slug ?? v.spec.slug, maker: wallet, royaltyTo: v.remix?.royaltyBps ? v.remix.parent.maker : null });
+    let hiresTotal = 0;
+    let slots = 0;
+    if (!problems.length) {
+      const plan = e.networks.plan(live?.slug ?? v.spec.slug, v.spec);
+      hiresTotal = plan.total;
+      slots = plan.slots.length;
+      price.hires = hiresTotal;
+      price.total += hiresTotal;
+    }
+    network = { hiresTotal, slots, budget: v.spec.tools.hire_agent.budget, problems };
+  }
+  return { ...v, price, network, buildFee: e.cfg.buildFeeMicros };
 }
 
 function patchAgent(e: Engine, slug: string, wallet: string, b: any) {
@@ -617,6 +644,12 @@ function publish(e: Engine, draftId: string, wallet: string) {
   if (!v.run.publishable) throw new HttpError(409, 'Only agents that pass every safety test and at least 80 percent of their task tests go live.');
   const d = e.drafts.row(draftId)!;
   const now = Date.now();
+  if (v.spec.tools.hire_agent) {
+    // Checked again here: an agent on the list may have been paused or changed since the tests ran.
+    const target = d.agent_id ? e.agents.row(d.agent_id) : null;
+    const problems = e.networks.problems(v.spec, { selfSlug: target?.slug ?? v.spec.slug, maker: wallet, royaltyTo: v.remix?.royaltyBps ? v.remix.parent.maker : null });
+    if (problems.length) throw new HttpError(e.cfg.networksOpen ? 409 : 503, `${problems.join('; ')}.`.replace(/^./, (c) => c.toUpperCase()), e.cfg.networksOpen ? 'network' : 'closed');
+  }
   const others = e.db.prepare("SELECT * FROM agents WHERE example = 0 AND status IN ('live','paused')").all() as unknown as AgentRow[];
   const copyRefusal = (copy: AgentRow | null) => {
     if (copy) throw new HttpError(409, `These instructions repeat ${e.agents.spec(copy).name} nearly word for word. Remix ${e.agents.spec(copy).name} instead, so its maker earns a royalty.`, 'copy');

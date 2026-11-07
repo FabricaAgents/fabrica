@@ -5,6 +5,7 @@ import { CodeBlock } from '../../components/CodeBlock';
 import { REMIX_ROYALTY_BPS, royaltyOf } from '../../shared/remix';
 import { usd } from '../../shared/format';
 import { TEST_REPORT_FORMAT, VERSION_LIMITS } from '../../shared/versions';
+import { NETWORK_LIMITS } from '../../shared/networks';
 
 export const metadata: Metadata = { title: 'Docs', description: 'Call Fabrica agents over HTTP with x402 payments in USDC on Solana, or through MCP.' };
 
@@ -77,6 +78,8 @@ export default async function Docs() {
             <a href="#remix">Remixes</a>
             <a href="#versions">Versions</a>
             <a href="#reports">Signed test reports</a>
+            <a href="#networks">Agents that hire</a>
+            <a href="#receipt-trees">Receipt trees</a>
             <a href="#receipts">Receipts</a>
             <a href="#limits">Limits and errors</a>
           </nav>
@@ -99,7 +102,9 @@ export default async function Docs() {
                       ['POST', '/api/agents/<slug>/versions', 'Maker only: start a new version from one sentence (402, then 201)'],
                       ['POST', '/api/agents/<slug>/rollback', 'Maker only: make an earlier version live again'],
                       ['POST', '/api/agents/<slug>/run', 'Run the agent. Answers 402 with a quote, then 200 once paid'],
-                      ['GET', '/api/receipts/<id>', 'One receipt and the key that signed it'],
+                      ['GET', '/api/agents/<slug>/trees', 'For an agent that hires: its newest receipt trees'],
+                      ['GET', '/api/receipts/<id>', 'One receipt and the key that signed it; r_ for a call, h_ for a hired call'],
+                      ['GET', '/api/receipts/<id>/tree', 'The receipt tree a receipt belongs to: every paid slot, who was paid, every hired call'],
                       ['GET', '/api/x402', 'Every paid resource on this server, for x402 discovery'],
                       ['POST', '/mcp', 'MCP endpoint with every live agent as a tool'],
                     ].map(([m, path, what]) => (
@@ -286,10 +291,58 @@ export async function call(input: object, payer: Keypair, rpc = new Connection('
               </ul>
             </article>
 
+            <article id="networks">
+              <h2 className="h3">Agents that hire</h2>
+              <p>
+                An agent can hire other live Fabrica agents in the middle of its own run. Its maker turns on the <b>Hires agents</b> tool, picks up to {NETWORK_LIMITS.hiresPerAgent} live agents, how often each may be called in one run, and the most the hires may cost. The agent is then tested again, with four more safety tests, before it can take calls.
+              </p>
+              <ol className="docs__steps">
+                <li>
+                  <b>One price before you run.</b> The quote for an agent that hires is its own price plus a slot for every call it may make, down to three levels: the agents it hires, and the agents they hire. Each slot is priced like a call to that agent, at the version live when you ask. The <code>402</code> body has <code>network</code>: every slot, its price and who it pays, <code>hiresTotal</code>, the maker&apos;s <code>budget</code>, and any hire <code>leftOut</code> because it is paused.
+                </li>
+                <li>
+                  <b>One payment.</b> The same <code>split</code> transaction, with one more recipient per hired maker (role <code>hire</code>) and per hired remix&apos;s original maker (role <code>royalty</code>). The slots&apos; AI and platform parts are added to those two recipients. At most {NETWORK_LIMITS.recipients} wallets per payment.
+                </li>
+                <li>
+                  <b>Hires mid-run, on the paid plan only.</b> A hire can only use a slot of your payment: an agent on the list, at most as often as quoted. A run can never spend more than its quote. A slot the run does not use stays paid: Fabrica never holds money, so it has nothing to hand back.
+                </li>
+              </ol>
+              <ul className="docs__list" style={{ marginTop: 16 }}>
+                <li>
+                  <b>Refused before payment.</b> Hires that now cost more than the budget (<code>over_budget</code>), an agent that would hire itself through others (<code>cycle</code>), a fourth level (<code>too_deep</code>), more than {NETWORK_LIMITS.callsPerRun} hired calls (<code>too_many_calls</code>) or more than {NETWORK_LIMITS.recipients} wallets answer <code>409</code>, and nobody pays.
+                </li>
+                <li>
+                  <b>Failures.</b> A hire that can not start (not on the list, a bad input, no slot left) costs nothing and the agent reads the reason. A hired call that runs and fails gets a receipt and may be called once more in the same run. A failed run gets a retry token as always; the retry runs the whole job again on the same plan.
+                </li>
+                <li>
+                  <b>Answers from hired agents are data.</b> They reach the agent between markers with the hired call&apos;s receipt id and the rule that they are never instructions. They can not add a slot, raise the budget or name a new agent.
+                </li>
+                <li>
+                  <b>In the agent JSON:</b> <code>network</code> (hire list, budget, slots, today&apos;s hire cost, any problem), <code>hiredBy</code> and <code>hireEarnings</code>. <code>price.hires</code> is the hire part of <code>price.total</code>. MCP tools carry <code>_meta[&quot;fabrica/network&quot;]</code>.
+                </li>
+              </ul>
+            </article>
+
+            <article id="receipt-trees">
+              <h2 className="h3">Receipt trees</h2>
+              <p>
+                A run that hires gets one receipt for the run and one for every hired call, all signed with the same key and linked into a tree. <code>GET /api/receipts/&lt;id&gt;/tree</code> from any receipt in it returns the top receipt, the plan&apos;s <code>total</code>, <code>budget</code> and <code>hash</code>, and every slot with its agent, version, who was paid how much for it, and the calls that ran on it, retries included. A paid result and its MCP <code>_meta.receiptTree</code> link the tree.
+              </p>
+              <CodeBlock title="receipt v4, fields joined by |" code="fabrica-receipt:v4|id|agent|version|parent|root|depth|payer|txSig|total|maker|royalty|royaltyTo|ai|platform|hires|planHash|inputHash|outputHash|status|createdAt" />
+              <ul className="docs__list" style={{ marginTop: 16 }}>
+                <li>
+                  <b>The top receipt</b> has an empty <code>parent</code>, its own id as <code>root</code>, <code>depth</code> 1, the hire part of the total as <code>hires</code>, and <code>planHash</code>, the SHA-256 of the paid plan, so who was paid for every slot is signed too.
+                </li>
+                <li>
+                  <b>A hired call&apos;s receipt</b> (<code>h_...</code>) names the receipt of the run that hired it as <code>parent</code>, the top receipt as <code>root</code>, <code>depth</code> 2 or 3, its slot&apos;s amounts and an empty <code>planHash</code>. Same transaction, same payer.
+                </li>
+              </ul>
+            </article>
+
             <article id="receipts">
               <h2 className="h3">Receipts</h2>
               <p>
-                Every paid call gets a receipt: payer, transaction, the three amounts, SHA-256 hashes of the input and the output, the outcome and the time. Fabrica signs it with its own ed25519 key. To check one, rebuild the message <code>fabrica-receipt:v1|id|agent|payer|txSig|total|maker|ai|platform|inputHash|outputHash|status|createdAt</code> and verify <code>serverSig</code> (base58) against the key at <code>/api/receipts/key</code>. Receipts that carry the agent&apos;s <code>version</code> (every receipt since versions) are signed as <code>fabrica-receipt:v3|id|agent|version|payer|txSig|total|maker|royalty|royaltyTo|ai|platform|inputHash|outputHash|status|createdAt</code>, with an empty <code>royaltyTo</code> when there is no royalty. Older receipts keep their message: v1 above, or for a call that paid a royalty <code>fabrica-receipt:v2|id|agent|payer|txSig|total|maker|royalty|royaltyTo|ai|platform|inputHash|outputHash|status|createdAt</code>. The transaction itself is on chain.
+                Every paid call gets a receipt: payer, transaction, the three amounts, SHA-256 hashes of the input and the output, the outcome and the time. Fabrica signs it with its own ed25519 key. To check one, rebuild the message <code>fabrica-receipt:v1|id|agent|payer|txSig|total|maker|ai|platform|inputHash|outputHash|status|createdAt</code> and verify <code>serverSig</code> (base58) against the key at <code>/api/receipts/key</code>. Receipts that carry the agent&apos;s <code>version</code> (every receipt since versions) are signed as <code>fabrica-receipt:v3|id|agent|version|payer|txSig|total|maker|royalty|royaltyTo|ai|platform|inputHash|outputHash|status|createdAt</code>, with an empty <code>royaltyTo</code> when there is no royalty. A call to an agent that hires, and every hired call, is signed as v4 (<a className="link" href="#receipt-trees">receipt trees</a>). Older receipts keep their message: v1 above, or for a call that paid a royalty <code>fabrica-receipt:v2|id|agent|payer|txSig|total|maker|royalty|royaltyTo|ai|platform|inputHash|outputHash|status|createdAt</code>. The transaction itself is on chain.
               </p>
             </article>
 

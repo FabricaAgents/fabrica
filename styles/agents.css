@@ -1380,3 +1380,335 @@
     padding: 10px 16px;
   }
 }
+
+/* agent networks: the hire list, the cap, receipt trees */
+
+.c-hire {
+  background: repeating-linear-gradient(135deg, var(--accent) 0 3px, color-mix(in srgb, var(--accent) 30%, var(--bg)) 3px 6px);
+}
+
+.hires {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.hire {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  padding: 16px 18px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+a.hire:hover {
+  border-color: var(--accent);
+}
+
+.hire__icon svg {
+  display: block;
+  width: 26px;
+  height: 26px;
+  color: var(--accent);
+}
+
+.hire__body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.hire__body b {
+  font-weight: 650;
+}
+
+.hire__body .muted {
+  font-size: 13px;
+}
+
+.hire__amt {
+  font-size: 13px;
+}
+
+.hire--cap {
+  grid-template-columns: minmax(0, 1fr);
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius-lg);
+  background: transparent;
+}
+
+.hire--cap b {
+  font-family: var(--font-mono);
+  font-size: 18px;
+}
+
+.trees {
+  display: grid;
+  gap: 14px;
+  margin-top: 26px;
+}
+
+.hired-by {
+  display: grid;
+  gap: 12px;
+  margin-top: 26px;
+}
+
+.rtree {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 18px 20px 20px;
+}
+
+.rtree__root {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.rtree__seal svg {
+  display: block;
+  width: 30px;
+  height: 30px;
+  color: var(--accent);
+}
+
+.rtree__rootbody {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rtree__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.rtree__name {
+  font-weight: 650;
+  color: var(--ink);
+}
+
+a.rtree__name:hover {
+  color: var(--accent);
+}
+
+.rtree__ver {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 7px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  color: var(--ink-2);
+}
+
+.rtree__state {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-3);
+}
+
+.rtree__state.is-ok {
+  color: var(--pass);
+}
+
+.rtree__state.is-fail {
+  color: var(--fail);
+}
+
+.rtree__amt {
+  margin-left: auto;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.rtree__line {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.rtree__id {
+  font-size: 12px;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+.rtree__list {
+  list-style: none;
+  margin: 14px 0 0 14px;
+  padding: 0 0 0 22px;
+  display: grid;
+  gap: 10px;
+}
+
+.rtree__node {
+  position: relative;
+}
+
+/* Each node draws its own branch: a line down from its parent to its card, and on to the next sibling. */
+.rtree__node::before {
+  content: '';
+  position: absolute;
+  left: -22px;
+  top: 24px;
+  width: 18px;
+  border-top: 1px solid var(--line-2);
+}
+
+.rtree__node::after {
+  content: '';
+  position: absolute;
+  left: -22px;
+  top: -14px;
+  bottom: -10px;
+  border-left: 1px solid var(--line-2);
+}
+
+.rtree__node:last-child::after {
+  bottom: auto;
+  height: 38px;
+}
+
+.rtree__card {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.rtree__card.is-unused {
+  border-left-color: var(--line-2);
+  border-style: dashed;
+  border-left-style: solid;
+}
+
+.rtree__paid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.rtree__paid li {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.rtree__paid b {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.rtree__calls {
+  list-style: none;
+  margin: 0;
+  padding: 8px 0 0;
+  border-top: 1px dashed var(--line);
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.rtree__calls li {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.rtree__calls .mono {
+  overflow-wrap: anywhere;
+}
+
+.rtree .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--pass);
+}
+
+.rtree .dot.fail {
+  background: var(--fail);
+}
+
+.rtree__skipped {
+  margin: 12px 0 0;
+}
+
+.rtree--compact {
+  padding: 14px;
+}
+
+.rtree--compact .rtree__list {
+  padding-left: 16px;
+  margin-left: 10px;
+}
+
+.rtree--compact .rtree__node::before {
+  left: -16px;
+  width: 12px;
+}
+
+.rtree--compact .rtree__node::after {
+  left: -16px;
+}
+
+.run__net {
+  margin: 0;
+  padding: 12px 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--accent-soft);
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.run__net b {
+  color: var(--ink);
+}
+
+.run__tree {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+@media (max-width: 640px) {
+  .hires {
+    grid-template-columns: 1fr;
+  }
+  .rtree {
+    padding: 14px;
+  }
+  .rtree__list {
+    padding-left: 12px;
+    margin-left: 6px;
+  }
+  .rtree__node::before {
+    left: -12px;
+    width: 9px;
+  }
+  .rtree__node::after {
+    left: -12px;
+  }
+  .rtree__amt {
+    margin-left: 0;
+  }
+  .run__net {
+    padding: 12px 16px;
+  }
+}

@@ -254,6 +254,28 @@ function standInValue(f: any, text: string): unknown {
   }
 }
 
+/** The hires a stand-in agent makes: one call to each agent its hire tool lists, with the request in its first text field. */
+export function standInHires(description: string, text: string): { name: string; args: Record<string, unknown> }[] {
+  const out: { name: string; args: Record<string, unknown> }[] = [];
+  for (const m of description.matchAll(/^- ([a-z0-9-]+) \(.*?\): .*? Input: (\{.*?\})\. Calls: (\d+)\./gm)) {
+    if (Number(m[3]) < 1) continue;
+    let fields: Record<string, string> = {};
+    try {
+      fields = JSON.parse(m[2]);
+    } catch {
+      continue;
+    }
+    const input: Record<string, unknown> = {};
+    for (const [name, hint] of Object.entries(fields)) {
+      if (hint.includes('optional')) continue;
+      const type = hint.split(',')[0];
+      input[name] = type === 'number' || type === 'integer' ? 3 : type === 'boolean' ? false : type === 'string[]' ? [text.slice(0, 200)] : type === 'object' ? {} : text.slice(0, 400);
+    }
+    out.push({ name: 'hire_agent', args: { agent: m[1], input } });
+  }
+  return out.slice(0, 4);
+}
+
 function standIn(v: View): FakeTurn {
   switch (v.req.purpose) {
     case 'spec':
@@ -284,6 +306,13 @@ function standIn(v: View): FakeTurn {
       const raw = JSON.stringify(input);
       const out: Record<string, unknown> = {};
       const refuse = ATTACK.test(raw);
+      // An agent that may hire: hire each agent on its menu once with the request, then answer.
+      const hire = v.req.tools?.find((t) => t.name === 'hire_agent');
+      if (hire && !refuse && !v.tools().length) {
+        const text = Object.values(input).find((x) => typeof x === 'string') as string | undefined;
+        const calls = standInHires(hire.description, text ?? raw);
+        if (calls.length) return { toolCalls: calls };
+      }
       for (const [name, type] of v.outputFields()) {
         if (type.startsWith('number') || type.startsWith('integer')) out[name] = 0;
         else if (type.startsWith('boolean')) out[name] = false;

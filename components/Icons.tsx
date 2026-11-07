@@ -108,6 +108,8 @@ export function ToolIcon({ tool }: { tool: ToolName | string }) {
           <path d="M14 3v4h4M12 11v6M9.5 14.5L12 17l2.5-2.5" />
         </svg>
       );
+    case 'hire_agent':
+      return <IconHire />;
     default:
       return null;
   }
@@ -118,6 +120,7 @@ export const TOOL_LABEL: Record<string, string> = {
   code_run: 'Code runner',
   solana_read: 'Solana reads',
   file_output: 'File output',
+  hire_agent: 'Hires agents',
 };
 export const IconRemix = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true" {...P}>
@@ -144,5 +147,21 @@ export const IconSeal = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true" {...P}>
     <path d="M12 2.8l2.2 1.6 2.7-.1.8 2.6 2.2 1.6-.9 2.5.9 2.5-2.2 1.6-.8 2.6-2.7-.1L12 19.2l-2.2-1.6-2.7.1-.8-2.6-2.2-1.6.9-2.5-.9-2.5 2.2-1.6.8-2.6 2.7.1z" />
     <path d="M8.8 11.2l2.2 2.2 4.2-4.3" />
+  </svg>
+);
+export const IconHire = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" {...P}>
+    <rect x="8.5" y="3" width="7" height="5.5" rx="1.4" />
+    <rect x="3" y="15.5" width="7" height="5.5" rx="1.4" />
+    <rect x="14" y="15.5" width="7" height="5.5" rx="1.4" />
+    <path d="M12 8.5v3.5M6.5 15.5V12h11v3.5" />
+  </svg>
+);
+export const IconTree = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" {...P}>
+    <rect x="3.5" y="3" width="7" height="5" rx="1.2" />
+    <rect x="11.5" y="10.5" width="9" height="4" rx="1.2" />
+    <rect x="11.5" y="17" width="9" height="4" rx="1.2" />
+    <path d="M7 8v11h4.5M7 12.5h4.5" />
   </svg>
 );

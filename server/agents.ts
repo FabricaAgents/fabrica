@@ -3,6 +3,7 @@ import type { AgentPublic, AgentSpec, AgentStats, CoinInfo, HolderTier, RemixPar
 import type { DB } from './db';
 import { priceFor, type FeeRules } from './pay/price';
 import type { Versions } from './versions';
+import type { Networks } from './networks';
 
 export interface AgentRow {
   id: string;
@@ -79,6 +80,8 @@ export type SortKey = 'revenue' | 'calls' | 'pass' | 'repeat' | 'new';
 export class AgentStore {
   /** Set by the engine: the version record and signed reports. */
   versions: Versions | null = null;
+  /** Set by the engine: hire lists, plans and receipt trees. */
+  networks: Networks | null = null;
   constructor(
     private db: DB,
     private fees: FeeRules,
@@ -212,6 +215,13 @@ export class AgentStore {
     const spec = this.spec(row);
     const tr = this.testRun(row.test_run_id);
     const royalty = this.royalty(row);
+    const price = priceFor(spec, this.fees, this.tierOf(row.maker), royalty.bps);
+    // An agent that hires: the price is one call of it plus every hire slot of a run, as the quote will ask.
+    const network = this.networks?.publicOf(row) ?? null;
+    if (network && !network.problem) {
+      price.hires = network.hiresTotal;
+      price.total += network.hiresTotal;
+    }
     return {
       id: row.id,
       slug: row.slug,
@@ -229,7 +239,7 @@ export class AgentStore {
       input: spec.input,
       output: spec.output,
       examples: spec.examples,
-      price: priceFor(spec, this.fees, this.tierOf(row.maker), royalty.bps),
+      price,
       publishedAt: row.published_at,
       version: row.version,
       pauseReason: row.pause_reason,
@@ -240,6 +250,9 @@ export class AgentStore {
       royaltyBps: royalty.bps,
       remixes: { count: this.remixRows(row.id).length, royaltiesMicros: this.royaltiesPaid(row.id) },
       ...this.versionInfo(row),
+      network,
+      hiredBy: this.networks?.hiredBy(row) ?? [],
+      hireEarnings: this.networks?.hireEarnings(row) ?? { slots: 0, calls: 0, makerMicros: 0 },
     };
   }
 

@@ -7,6 +7,7 @@ import { api, ApiError } from '../../lib/api';
 import { payRequirements, PayError } from '../../lib/pay';
 import { connect, useWallet } from '../../lib/wallet';
 import { IconArrow, IconCheck, IconReceipt, IconWallet } from '../Icons';
+import { ReceiptTree, type TreeData } from './ReceiptTree';
 
 type Value = string | boolean;
 
@@ -112,6 +113,8 @@ export function RunPanel(props: {
   fields: FieldSpec[];
   examples: { title: string; input: Record<string, unknown> }[];
   price: PriceBreakdown;
+  /** For an agent that hires: the calls its price includes and the maker's cap. */
+  network?: { slots: number; hiresTotal: number; budget: number; names: string[] } | null;
   canRun: boolean;
   blocked: string | null;
   sample: { input: Record<string, unknown>; output: Record<string, unknown> } | null;
@@ -122,6 +125,8 @@ export function RunPanel(props: {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ output: Record<string, unknown> | null; receipt: Receipt; retryToken?: string; message?: string } | null>(null);
   const [events, setEvents] = useState<string[]>([]);
+  const [hired, setHired] = useState<string[]>([]);
+  const [tree, setTree] = useState<TreeData | null>(null);
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
   const busy = stage !== null && stage !== 'done' && stage !== 'failed';
   useEffect(() => () => void (poll.current && clearInterval(poll.current)), []);
@@ -133,17 +138,30 @@ export function RunPanel(props: {
       try {
         const { body } = await api<{ stage: string; events: { detail: string; type: string }[] }>(`/api/runs/${nonce}`);
         if (body.stage && body.stage !== 'unknown') setStage((s) => (s === 'done' || s === 'failed' ? s : body.stage));
-        setEvents(body.events.filter((e) => e.type === 'tool').map((e) => e.detail));
+        setEvents(body.events.filter((e) => e.type === 'tool' && e.detail !== 'hire_agent').map((e) => e.detail));
+        setHired(body.events.filter((e) => e.type === 'hire').map((e) => e.detail));
       } catch {
         /* the final answer arrives on the main request */
       }
     }, 700);
   };
 
+  // A run that hired: its receipt tree, read once the answer is in.
+  const loadTree = async (receipt: Receipt) => {
+    if (!receipt.depth) return;
+    try {
+      setTree((await api<TreeData>(`/api/receipts/${receipt.rootId ?? receipt.id}/tree`)).body);
+    } catch {
+      /* the receipt itself is shown either way */
+    }
+  };
+
   const run = async (retryToken?: string) => {
     setError(null);
     setResult(null);
     setEvents([]);
+    setHired([]);
+    setTree(null);
     const { input, error: bad } = toInput(props.fields, vals);
     if (bad) return setError(bad);
     try {
@@ -152,6 +170,7 @@ export function RunPanel(props: {
         const r = await api(`/api/agents/${props.slug}/run`, { body: { input }, headers: { 'x-fabrica-retry': retryToken } });
         setResult(r.body);
         setStage('done');
+        void loadTree(r.body.receipt);
         return;
       }
       const payer = wallet.address ?? (await connect());
@@ -170,9 +189,11 @@ export function RunPanel(props: {
       if (r.status === 200) {
         setResult(body);
         setStage('done');
+        void loadTree(body.receipt);
       } else if (body.receipt) {
         setResult({ output: null, receipt: body.receipt, retryToken: body.retryToken, message: body.message });
         setStage('failed');
+        void loadTree(body.receipt);
       } else throw new ApiError(r.status, body.error, body.message ?? 'The call failed.', body);
     } catch (e) {
       poll.current && clearInterval(poll.current);
@@ -227,6 +248,11 @@ export function RunPanel(props: {
           {usd(props.price.total)} <span className="muted">per call</span>
         </span>
       </div>
+      {props.network ? (
+        <div className="run__net">
+          <b>The price before you run.</b> {usd(props.price.total)} covers this agent and up to {props.network.slots} call{props.network.slots === 1 ? '' : 's'} to {props.network.names.join(' and ')} ({usd(props.network.hiresTotal)}, under a {usd(props.network.budget)} cap). One payment pays every maker; the run can never spend more.
+        </div>
+      ) : null}
       <div className="panel__body run__body">
         {props.examples.length ? (
           <div className="chips run__ex">
@@ -267,6 +293,7 @@ export function RunPanel(props: {
                 {s === 'sign' ? 'Approve' : s === 'confirming' ? 'Confirm payment' : 'Agent at work'}
               </li>
             ))}
+            {hired.length ? <li className="run__events">Hired: {hired.join(', ')}</li> : null}
             {events.length ? <li className="run__events">Used: {events.join(', ')}</li> : null}
           </ol>
         ) : null}
@@ -306,12 +333,18 @@ export function RunPanel(props: {
               <b>Receipt {result.receipt.id}</b>
               <span>
                 {usd(result.receipt.total)} paid: {usd(result.receipt.maker)} to the maker, {result.receipt.royalty ? `${usd(result.receipt.royalty)} royalty to the original maker, ` : ''}
-                {usd(result.receipt.ai)} for AI, {usd(result.receipt.platform)} platform fee.{' '}
+                {usd(result.receipt.ai)} for AI, {usd(result.receipt.platform)} platform fee{result.receipt.hires ? `, ${usd(result.receipt.hires)} for hired agents, each paid directly` : ''}.{' '}
                 <a className="link" href={solscanTx(result.receipt.txSig)} target="_blank" rel="noopener noreferrer">
                   See the transaction
                 </a>
               </span>
             </div>
+          </div>
+        ) : null}
+        {tree ? (
+          <div className="run__tree">
+            <span className="kicker kicker--plain">Receipt tree</span>
+            <ReceiptTree tree={tree} compact />
           </div>
         ) : null}
       </div>

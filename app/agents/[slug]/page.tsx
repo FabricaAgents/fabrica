@@ -4,7 +4,8 @@ import { notFound } from 'next/navigation';
 import { connection } from 'next/server';
 import { engine } from '../../../lib/server';
 import { AgentCard, StatusBadge } from '../../../components/AgentCard';
-import { ToolIcon, TOOL_LABEL, IconFlame, IconRemix, IconArrow, IconSeal } from '../../../components/Icons';
+import { ToolIcon, TOOL_LABEL, IconFlame, IconRemix, IconArrow, IconSeal, IconHire } from '../../../components/Icons';
+import { ReceiptTree } from '../../../components/agent/ReceiptTree';
 import { Changelog } from '../../../components/agent/Changelog';
 import { ImproveButton } from '../../../components/agent/VersionActions';
 import { RunPanel } from '../../../components/agent/RunPanel';
@@ -51,6 +52,11 @@ export default async function AgentPage({ params }: { params: P }) {
   const changelog = e.versions.changelog(row);
   const rollbacks = changelog.filter((c) => c.kind === 'rollback').length;
   const report = a.report;
+  const net = a.network;
+  const trees = net && !a.example ? e.networks.recentTrees(row, 2) : [];
+  const showHires = Boolean(net || a.hiredBy.length || a.hireEarnings.slots);
+  const hireNames = net ? net.hires.map((h) => h.name) : [];
+  const listNames = (n: string[]) => (n.length < 2 ? n.join('') : `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`);
 
   return (
     <>
@@ -87,13 +93,20 @@ export default async function AgentPage({ params }: { params: P }) {
               <p className="lede">{a.brief}</p>
               <div className="chips" style={{ marginTop: 20 }}>
                 {a.tools.length ? (
-                  a.tools.map((tool) => (
-                    <span key={tool} className="chip">
-                      <ToolIcon tool={tool} />
-                      {TOOL_LABEL[tool]}
-                      {tool === 'web_fetch' && a.toolConfig.web_fetch?.allowDomains.length ? `: ${a.toolConfig.web_fetch.allowDomains.join(', ')}` : ''}
-                    </span>
-                  ))
+                  a.tools.map((tool) =>
+                    tool === 'hire_agent' ? (
+                      <a key={tool} className="chip chip--link" href="#hires">
+                        <ToolIcon tool={tool} />
+                        Hires {hireNames.length === 1 ? 'one agent' : `${hireNames.length} agents`}
+                      </a>
+                    ) : (
+                      <span key={tool} className="chip">
+                        <ToolIcon tool={tool} />
+                        {TOOL_LABEL[tool]}
+                        {tool === 'web_fetch' && a.toolConfig.web_fetch?.allowDomains.length ? `: ${a.toolConfig.web_fetch.allowDomains.join(', ')}` : ''}
+                      </span>
+                    ),
+                  )
                 ) : (
                   <span className="chip">No tools: text in, JSON out</span>
                 )}
@@ -133,7 +146,7 @@ export default async function AgentPage({ params }: { params: P }) {
             <div className="stat">
               <div className="stat__label">Per call</div>
               <div className="stat__value">{usd(a.price.total)}</div>
-              <div className="stat__sub">USDC, AI included</div>
+              <div className="stat__sub">{net && a.price.hires ? 'USDC, AI and hires included' : 'USDC, AI included'}</div>
             </div>
             <div className="stat">
               <div className="stat__label">Task tests</div>
@@ -162,6 +175,7 @@ export default async function AgentPage({ params }: { params: P }) {
       <nav className="subnav" aria-label="On this page">
         <div className="wrap">
           <a href="#run">Run it</a>
+          {showHires ? <a href="#hires">Network</a> : null}
           <a href="#tests">Tests</a>
           <a href="#versions">Versions</a>
           {!a.example ? <a href="#earnings">Earnings</a> : null}
@@ -180,8 +194,9 @@ export default async function AgentPage({ params }: { params: P }) {
               fields={a.input}
               examples={a.examples}
               price={a.price}
-              canRun={canRun}
-              blocked={canRun ? null : blocked}
+              network={net && !net.problem ? { slots: net.slots, hiresTotal: net.hiresTotal, budget: net.budget, names: hireNames } : null}
+              canRun={canRun && !net?.problem}
+              blocked={canRun ? (net?.problem ?? null) : blocked}
               sample={sampleTest ? { input: sampleTest.input, output: sampleTest.output as Record<string, unknown> } : null}
             />
             {!a.example && a.maker ? <MakerPanel slug={a.slug} maker={a.maker} status={a.status} makerFee={a.price.maker + a.price.royalty} royalty={a.price.royalty && a.remixOf ? { amount: a.price.royalty, to: a.remixOf.name } : null} coin={a.coin} agentName={a.name} versionsOpen={cfg.versionsOpen} /> : null}
@@ -197,6 +212,7 @@ export default async function AgentPage({ params }: { params: P }) {
                   {a.price.royalty ? <span className="c-royalty" style={{ flex: a.price.royalty }} /> : null}
                   <span className="c-ai" style={{ flex: a.price.ai }} />
                   <span className="c-plat" style={{ flex: a.price.platform }} />
+                  {a.price.hires ? <span className="c-hire" style={{ flex: a.price.hires }} /> : null}
                 </div>
                 <div className="split__rows" style={{ marginTop: 16 }}>
                   <div className="split__row">
@@ -230,9 +246,21 @@ export default async function AgentPage({ params }: { params: P }) {
                     </div>
                     <span className="amt">{usd(a.price.platform)}</span>
                   </div>
+                  {a.price.hires ? (
+                    <div className="split__row">
+                      <i className="c-hire" />
+                      <div>
+                        <b>Hired agents</b>
+                        <small>up to {net?.slots} call{net?.slots === 1 ? '' : 's'}, cap {usd(net?.budget ?? 0)}</small>
+                      </div>
+                      <span className="amt">{usd(a.price.hires)}</span>
+                    </div>
+                  ) : null}
                 </div>
                 <p className="hint" style={{ marginTop: 14 }}>
-                  One transaction from the caller pays all {a.price.royalty ? 'four' : 'three'} directly. The AI part is the most a call may spend; the run stops there.
+                  {a.price.hires
+                    ? 'One transaction from the caller pays every part directly, each hired maker included. The AI part is the most a call may spend, and a run can never spend more than this price.'
+                    : `One transaction from the caller pays all ${a.price.royalty ? 'four' : 'three'} directly. The AI part is the most a call may spend; the run stops there.`}
                 </p>
               </div>
             </div>
@@ -270,6 +298,99 @@ export default async function AgentPage({ params }: { params: P }) {
           </aside>
         </div>
       </section>
+
+      {showHires ? (
+        <section className="section--tight" id="hires">
+          <div className="wrap">
+            <div className="block-head">
+              <div>
+                <span className="kicker">Agent network</span>
+                <h2 className="h3" style={{ marginTop: 10 }}>
+                  {net ? `Hires ${listNames(hireNames)}, up to ${net.hires.reduce((n, h) => n + h.calls, 0)} call${net.hires.reduce((n, h) => n + h.calls, 0) === 1 ? '' : 's'} a run` : `Hired by ${listNames(a.hiredBy.map((h) => h.name))}`}
+                </h2>
+              </div>
+              {net && !a.example ? (
+                <span className="hint">
+                  {net.used.paid ? `Its runs used ${net.used.ran} of ${net.used.paid} paid hire slots` : 'No paid runs yet'}
+                </span>
+              ) : null}
+            </div>
+            {net ? (
+              <>
+                <p className="block-lede">
+                  {a.example
+                    ? 'An example that hires other examples. Its tests ran with real calls to them, so you can see every hire in the test results below. Examples take no paid calls, so this one is not for sale.'
+                    : 'In the middle of a run this agent calls the agents below. The price already includes every call it may make, each hired maker is paid in the caller’s one transaction, and a run can never spend more than its quote. A slot the run does not use stays paid.'}
+                </p>
+                {net.problem ? <div className="notice notice--fail" style={{ marginBottom: 16 }}>{net.problem}</div> : null}
+                <div className="hires">
+                  {net.hires.map((h) => (
+                    <a key={h.slug} className="hire card" href={`/agents/${h.slug}`}>
+                      <span className="hire__icon">
+                        <IconHire />
+                      </span>
+                      <div className="hire__body">
+                        <b>{h.name}</b>
+                        <span className="muted">
+                          {h.calls === 1 ? 'One call' : `${h.calls} calls`} a run, {h.perCall ? `${usd(h.perCall)} each` : 'not live now'}
+                          {h.status === 'example' ? ', an example' : h.status === 'paused' ? ', paused' : ''}
+                        </span>
+                      </div>
+                    </a>
+                  ))}
+                  <div className="hire hire--cap">
+                    <div className="hire__body">
+                      <b>{usd(net.hiresTotal)}</b>
+                      <span className="muted">for all hires in one run, of a {usd(net.budget)} cap the maker set</span>
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : null}
+            {trees.length ? (
+              <div className="trees">
+                <h3 className="h4">Latest receipt trees</h3>
+                {trees.map((t) => (
+                  <ReceiptTree key={t.root.id} tree={t} />
+                ))}
+              </div>
+            ) : net && !a.example ? (
+              <p className="hint">The first paid run will show its receipt tree here: who did what, and who was paid for it.</p>
+            ) : null}
+            {a.hiredBy.length || a.hireEarnings.slots ? (
+              <div className="hired-by">
+                {net ? <h3 className="h4">Hired by other agents</h3> : null}
+                <div className="hires">
+                  {a.hiredBy.map((h) => (
+                    <Link key={h.slug} className="hire card" href={`/agents/${h.slug}`}>
+                      <span className="hire__icon">
+                        <IconHire />
+                      </span>
+                      <div className="hire__body">
+                        <b>{h.name}</b>
+                        <span className="muted">has {a.name} on its hire list</span>
+                      </div>
+                    </Link>
+                  ))}
+                  <div className="hire hire--cap">
+                    <div className="hire__body">
+                      <b>{usd(a.hireEarnings.makerMicros)}</b>
+                      <span className="muted">
+                        {a.hireEarnings.slots
+                          ? `earned by its maker from ${a.hireEarnings.slots} paid hire slot${a.hireEarnings.slots === 1 ? '' : 's'} in other agents’ runs, ${a.hireEarnings.calls} called`
+                          : 'earned from hires so far; the first paid run that hires it will show here'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <p className="hint" style={{ marginTop: 12 }}>
+                  A hired call is paid in the caller’s payment to the agent that hires it. It does not count as a paid call of this agent or toward its place on the leaderboard.
+                </p>
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       <section className="section--tight" id="tests">
         <div className="wrap">

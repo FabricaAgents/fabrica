@@ -12,6 +12,9 @@ export default function Roadmap() {
   const next = ROADMAP.find((p) => p.state === 'next');
   const WORDS = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
   const liveLine = live === 1 ? 'Phase 1 is live' : `${WORDS[live] ?? live} phases are live`;
+  // A phase under way: the next phase with some of its parts already live.
+  const started = next ? next.items.filter((it) => it.state === 'live').length : 0;
+  const stateLabel = (p: (typeof ROADMAP)[number]) => (p.state === 'next' && p.items.some((it) => it.state === 'live') ? 'In progress' : LABEL[p.state]);
   return (
     <>
       <section className="page-head grid-bg">
@@ -22,7 +25,7 @@ export default function Roadmap() {
           </h1>
           <p className="lede">
             Each phase builds one part of Fabrica, on top of the last. {liveLine}
-            {next ? `, ${next.name} is next` : ''}; the rest are planned, with no dates, and new phases are added as we go.
+            {next ? (started ? `, and ${next.name} has started: ${WORDS[started]?.toLowerCase() ?? started} of its ${WORDS[next.items.length]?.toLowerCase() ?? next.items.length} parts are live` : `, ${next.name} is next`) : ''}; the rest are planned, with no dates, and new phases are added as we go.
           </p>
           <div className="hero__ctas">
             <Link className="btn btn--primary btn--lg" href="/build">
@@ -47,7 +50,7 @@ export default function Roadmap() {
                   <div className="rm__head">
                     <span className="rm__num">Phase {String(i + 1).padStart(2, '0')}</span>
                     <span className="rm__focus">{p.focus}</span>
-                    <span className={`rm__state rm__state--${p.state}`}>{LABEL[p.state]}</span>
+                    <span className={`rm__state rm__state--${p.state}`}>{stateLabel(p)}</span>
                   </div>
                   <h2 className="rm__name display">{p.name}</h2>
                   <p className="rm__line">{p.line}</p>

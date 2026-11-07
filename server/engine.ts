@@ -25,6 +25,7 @@ import { TokenDesk } from './token/fabrica';
 import { ChainStream } from './solana/stream';
 import { Versions } from './versions';
 import { Backups } from './backup';
+import { Networks } from './networks';
 
 export interface EngineOptions {
   cfg: Config;
@@ -55,6 +56,7 @@ export class Engine {
   readonly receiptKeys;
   readonly versions: Versions;
   readonly backups: Backups;
+  readonly networks: Networks;
   readonly startedAt = Date.now();
   readonly log: (m: string) => void;
   provider: Provider | null;
@@ -90,6 +92,9 @@ export class Engine {
     // Test reports are signed with the receipt key, so one public key checks both.
     this.versions = new Versions(this.db, this.receiptKeys, o.cfg.siteUrl);
     this.agents.versions = this.versions;
+    this.networks = new Networks(this.db, this.agents, o.cfg, (w) => this.token.cachedTier(w), () => this.versions);
+    this.agents.networks = this.networks;
+    this.drafts.networks = this.networks;
     this.backups = new Backups(this.db, o.cfg.dataDir, this.log);
     this.calls = new Calls(this);
     this.coins = new Coins(this);
@@ -147,7 +152,7 @@ export class Engine {
 
   async seed(force = false) {
     try {
-      await seedExamples(this.db, this.files, this.cfg.fixturesDir, this.log, force);
+      await seedExamples(this.db, this.files, this.cfg.fixturesDir, this.log, force, this.cfg);
       this.versions.ensureAll();
       this.seeded = true;
     } catch (e) {
@@ -189,6 +194,7 @@ export class Engine {
       buildClosedReason,
       remixOpen: this.cfg.remixOpen,
       versionsOpen: this.cfg.versionsOpen,
+      networksOpen: this.cfg.networksOpen,
       payOpen: this.payments.open && !sw.callsPaused,
       aiMode: this.cfg.aiMode,
       testMode: this.cfg.testMode,
@@ -231,6 +237,7 @@ export class Engine {
   }
 
   receipt(id: string): Receipt | null {
+    if (id.startsWith('h_')) return this.networks.hireReceipt(id);
     const row = this.db.prepare('SELECT * FROM receipts WHERE id = ?').get(id) as ReceiptRow | undefined;
     if (!row) return null;
     const a = this.db.prepare('SELECT slug FROM agents WHERE id = ?').get(row.agent_id) as { slug: string } | undefined;
@@ -292,7 +299,7 @@ export class Engine {
       ai: this.cfg.aiMode,
       examples: this.seeded ? 'built' : this.seedError ? `failed: ${this.seedError}` : 'building',
       payments: this.payments.open ? 'open' : 'closed: set FABRICA_OPS_WALLET and FABRICA_BURN_WALLET',
-      switches: { calls: sw.callsPaused ? 'paused' : 'on', builds: sw.buildsPaused ? 'paused' : 'on', remix: this.cfg.remixOpen ? 'on' : 'off', versions: this.cfg.versionsOpen ? 'on' : 'off' },
+      switches: { calls: sw.callsPaused ? 'paused' : 'on', builds: sw.buildsPaused ? 'paused' : 'on', remix: this.cfg.remixOpen ? 'on' : 'off', versions: this.cfg.versionsOpen ? 'on' : 'off', networks: this.cfg.networksOpen ? 'on' : 'off' },
       backup: this.backups.health(),
       rpc: this.rpc.label,
       rpcNodes: this.rpc instanceof HttpRpc ? this.rpc.stats.map((s, i) => ({ node: i, ok: s.ok, fail: s.fail, lastError: s.lastError })) : null,

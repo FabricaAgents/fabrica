@@ -18,6 +18,7 @@ const usdc = Keypair.generate().publicKey.toBase58();
 const user = Keypair.generate();
 const buyer = Keypair.generate();
 const remixer = Keypair.generate();
+const networker = Keypair.generate();
 
 const results: { name: string; ok: boolean; detail?: string }[] = [];
 async function step(name: string, fn: () => Promise<void>) {
@@ -80,7 +81,7 @@ const walletBinding = walletFor(user);
 
 const browser = new Browser();
 await browser.start();
-const PAGES = ['/', '/agents', '/agents/mint-inspector', '/agents/release-notes-writer', '/agents/release-notes-writer/v/1', '/remix/release-notes-writer', '/build', '/docs', '/roadmap', '/token', '/terms'];
+const PAGES = ['/', '/agents', '/agents/mint-inspector', '/agents/release-notes-writer', '/agents/release-notes-writer/v/1', '/agents/invoice-check', '/remix/release-notes-writer', '/build', '/docs', '/roadmap', '/token', '/terms'];
 let liveSlug = '';
 let remixSlug = '';
 
@@ -269,6 +270,83 @@ await step('versions: the maker improves the agent with one sentence, the full s
       await v.close();
     }
   }
+});
+
+let netSlug = '';
+await step('networks: a maker lets an agent hire two live agents in the build flow, the four network safety tests pass, it publishes with the hires in its price', async () => {
+  await fetch(`${BASE}/api/__test/fund`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ wallet: networker.publicKey.toBase58(), micros: 50_000_000 }) });
+  const sentence = 'Checks pasted meeting notes by hiring two summary agents, then lists the open questions';
+  const page = await browser.page(`${BASE}/build?s=${encodeURIComponent(sentence)}`, { onNew: FAKE_PHANTOM(networker.publicKey.toBase58()), bindings: walletFor(networker) });
+  await page.waitFor('document.readyState === "complete"', 20000, 'the build page');
+  await page.eval(`fetch('/api/auth/logout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(() => true)`);
+  await page.goto(`${BASE}/build?s=${encodeURIComponent(sentence)}`);
+  await page.waitFor('[...document.querySelectorAll("button")].some(b => b.textContent.includes("Sign in and build") && !b.disabled)', 20000, 'build button');
+  await page.click('Sign in and build');
+  await page.waitFor('document.querySelector("#sp-name")?.value', 30000, 'the spec');
+  // Turn on hiring and pick both live agents from the list.
+  await page.eval(`(() => { const box = [...document.querySelectorAll('.tool-ed')].find(t => t.textContent.includes('Hires agents')).querySelector('input[type=checkbox]'); box.click(); })()`);
+  await page.waitFor('!!document.querySelector(".hire-ed__add select") && document.querySelectorAll(".hire-ed__add option").length >= 3', 20000, 'the hire picker');
+  for (const slug of [liveSlug, remixSlug]) {
+    await page.eval(`(() => { const s = document.querySelector('.hire-ed__add select'); const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; set.call(s, ${JSON.stringify(slug)}); s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await page.waitFor('!document.querySelector(".hire-ed__add .btn").disabled', 5000, 'the hire button');
+    await page.eval('document.querySelector(".hire-ed__add .btn").click()');
+  }
+  await page.waitFor('document.querySelectorAll(".hire-ed__row").length === 2', 5000, 'two hires listed');
+  await page.click('Save changes');
+  await page.waitFor('/for up to 2 hired calls/.test(document.querySelector(".spec__price")?.textContent ?? "")', 20000, 'the price with the hires');
+  await page.click('Write the tests');
+  await page.waitFor('document.querySelectorAll(".tcase").length > 4', 30000, 'the tests');
+  const titles = await page.eval('[...document.querySelectorAll(".tcase")].map(t => t.textContent).join(" | ")');
+  assert(/take over/.test(titles) && /spend more/.test(titles) && /loop/.test(titles) && /paused/.test(titles), `the network safety tests: ${titles.slice(0, 400)}`);
+  await page.click('Run the tests');
+  await page.waitFor('[...document.querySelectorAll("button")].some(b => b.textContent.startsWith("Publish"))', 90000, 'a passing run');
+  await page.click('Publish');
+  await page.waitFor('location.pathname.startsWith("/agents/") && !!document.querySelector("#hires .hire")', 30000, 'the agent page with its hires');
+  netSlug = (await page.eval('location.pathname')).split('/')[2];
+  assert(await page.eval('!!document.querySelector(".c-hire") && !!document.querySelector(".run__net")'), 'the hires in the split and the price before you run');
+  assert(!page.errors.length, page.errors.join(' | '));
+  await page.close();
+});
+
+await step('networks: one payment in Phantom, both hired makers paid, the receipt tree in the run panel and on the page', async () => {
+  const bal = async (k: Keypair) => BigInt((await (await fetch(`${BASE}/api/__test/balance?wallet=${k.publicKey.toBase58()}`)).json()).balance);
+  const before = { user: await bal(user), remixer: await bal(remixer), networker: await bal(networker) };
+  const a = await (await fetch(`${BASE}/api/agents/${netSlug}`)).json();
+  assert(a.network && a.network.slots === 2 && a.price.hires > 0, JSON.stringify(a.network));
+  const page = await browser.page(`${BASE}/agents/${netSlug}`, { onNew: FAKE_PHANTOM(buyer.publicKey.toBase58()), bindings: walletFor(buyer) });
+  await page.waitFor('!!document.querySelector("#in-request")', 20000, 'the form');
+  await new Promise((r) => setTimeout(r, 900));
+  await page.eval(`(() => { const t = document.querySelector('#in-request'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(t, 'Notes: we ship Friday. Open: who writes the docs? Who tells support?'); t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await page.click('Pay $');
+  await page.waitFor('document.querySelectorAll(".run__tree .rtree__node").length === 2', 40000, 'the receipt tree').catch(async (e) => {
+    throw new Error(`${e.message}; page says: ${await page.eval('[...document.querySelectorAll(".run .notice, .run__stages, .receipt")].map(n => n.textContent).join(" | ")')} ${page.errors.join(' | ')}`);
+  });
+  const treeText = await page.eval('document.querySelector(".run__tree").textContent');
+  assert(/Did its part/.test(treeText) && /h_/.test(treeText), treeText.slice(0, 300));
+  assert(!page.errors.length, page.errors.join(' | '));
+  await page.close();
+  const tree = (await (await fetch(`${BASE}/api/agents/${netSlug}/trees`)).json()).trees[0];
+  const live = tree.nodes.find((n: any) => n.agent.slug === liveSlug);
+  const remix = tree.nodes.find((n: any) => n.agent.slug === remixSlug);
+  assert((await bal(remixer)) - before.remixer === BigInt(remix.paid.maker), 'the remix maker was paid for its slot');
+  assert((await bal(user)) - before.user === BigInt(live.paid.maker + remix.paid.royalty), 'the original maker got its slot and the royalty of the hired remix');
+  assert((await bal(networker)) - before.networker === BigInt(a.price.maker), 'the hiring maker got its own part');
+  const v = await browser.page(`${BASE}/agents/${netSlug}#hires`);
+  await v.waitFor('!!document.querySelector("#hires .rtree")', 20000, 'the tree on the page');
+  await v.close();
+  for (const phone of [false, true]) {
+    for (const p of [`/agents/${netSlug}`, `/agents/${liveSlug}`, '/agents/invoice-check', '/roadmap']) {
+      const pg = await browser.page(BASE + p, { phone });
+      await pg.waitFor('document.readyState === "complete" && !!document.querySelector("footer")', 20000, `${p} loaded`);
+      await new Promise((r) => setTimeout(r, 400));
+      const m = await pg.eval('({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth })');
+      assert(m.sw <= m.cw + 1, `${p} ${phone ? 'phone' : 'desktop'} scrolls sideways (${m.sw} > ${m.cw})`);
+      assert(!pg.errors.length, `${p}: ${pg.errors.join(' | ')}`);
+      await pg.close();
+    }
+  }
+  const rm = await (await fetch(`${BASE}/roadmap`)).text();
+  assert(/Agent Networks has started/.test(rm) && /In progress/.test(rm), 'the roadmap shows phase 3 under way');
 });
 
 await step('backups: a snapshot on request, npm run backup:pull saves it here with a matching hash, health shows the time', async () => {

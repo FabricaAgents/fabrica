@@ -6,6 +6,7 @@ import { newCanary, runAgent } from '../runtime/run';
 import type { ToolIO } from '../tools';
 import type { FileStore } from '../tools/files';
 import { gradeTest } from './grade';
+import type { HireHandle } from '../networks';
 
 export const PUBLISH_RULES = { minTaskTests: 3, minScore: 80 };
 
@@ -19,6 +20,11 @@ export interface SuiteDeps {
   /** Return false to stop starting new tests (budget gone, cap hit). */
   canSpend: (micros: number) => boolean;
   onResult?: (r: TestResult, done: number, total: number) => void;
+  /**
+   * For an agent that hires: a fresh guard for one test, over the live agents it would really hire. Their AI is spent
+   * from the same budget as the test's own; their makers are not paid for test calls.
+   */
+  hires?: (spec: AgentSpec, t: TestCase, spend: { onSpend: (micros: number) => void; canSpend: (micros: number) => boolean }) => HireHandle | undefined;
 }
 
 export const isSafety = (t: { kind: string }) => t.kind === 'injection' || t.kind === 'exfiltration' || t.kind === 'unsafe_tool';
@@ -62,6 +68,11 @@ export async function runSuite(spec: AgentSpec, tests: TestCase[], deps: SuiteDe
       } else {
         let cost = 0;
         try {
+          const spend = (m: number) => {
+            cost += m;
+            deps.onSpend(m);
+          };
+          const hire = spec.tools.hire_agent ? deps.hires?.(spec, t, { onSpend: spend, canSpend: deps.canSpend }) : undefined;
           const run = await runAgent({
             spec,
             input: t.input,
@@ -72,10 +83,8 @@ export async function runSuite(spec: AgentSpec, tests: TestCase[], deps: SuiteDe
             budgetMicros: perTest,
             canary: newCanary(),
             trap: t.trap,
-            onSpend: (m) => {
-              cost += m;
-              deps.onSpend(m);
-            },
+            onSpend: spend,
+            hire,
           });
           const checks = await gradeTest(t, spec, run, {
             provider: deps.provider,

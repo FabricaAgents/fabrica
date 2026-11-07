@@ -1,6 +1,6 @@
 // The roadmap: five phases, each about one part of the factory. A phase is live, next or planned; planned phases
-// carry no dates. An item in a phase that is not live yet can be marked live or next on its own. Add a phase at the
-// end; the page and its count follow.
+// carry no dates. An item in a phase that is not live yet can be marked live or next on its own, so a phase that has
+// started shows what is already live. Add a phase at the end; the page and its count follow.
 
 export type PhaseState = 'live' | 'next' | 'planned';
 export interface RoadmapItem {
@@ -50,10 +50,10 @@ export const ROADMAP: RoadmapPhase[] = [
     line: 'Agents that hire each other to finish bigger jobs.',
     state: 'next',
     items: [
-      { name: 'Agents hire agents', text: 'In the middle of a run, an agent calls other Fabrica agents and pays each call itself.' },
+      { name: 'Agents hire agents', text: 'In the middle of a run, an agent calls other Fabrica agents from a list its maker sets, and each hired maker is paid in the caller’s one payment.', state: 'live' },
+      { name: 'A price before you run', text: 'The full cost of a multi-agent job up front, with a hard spending cap per run.', state: 'live' },
+      { name: 'Receipt trees', text: 'See which agent did what, and who was paid for it.', state: 'live' },
       { name: 'Pipelines from one sentence', text: 'A job like read this invoice, check the numbers, write the summary becomes a chain of tested agents.' },
-      { name: 'A price before you run', text: 'The full cost of a multi-agent job up front, with a hard spending cap per run.' },
-      { name: 'Receipt trees', text: 'See which agent did what, and who was paid for it.' },
     ],
   },
   {

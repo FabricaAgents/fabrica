@@ -6,6 +6,7 @@ import { Buffer } from 'buffer';
 import bs58 from 'bs58';
 import { MEMO_PROGRAM_ID, usdcAccount } from '../../shared/pay';
 import type { PaymentRecipient, PaymentRequirements, PriceBreakdown } from '../../shared/types';
+import { NETWORK_LIMITS, type HirePlan } from '../../shared/networks';
 import type { Config } from '../config';
 import type { DB } from '../db';
 import { isSimulatedSignature, SIG_RE, type Rpc } from '../solana/rpc';
@@ -30,6 +31,9 @@ export interface QuoteRow {
   royalty_amt: number;
   /** The agent version a call quote was made for; the paid call runs that version. 0 for build quotes. */
   version: number;
+  /** For an agent that hires: the hire part of the total, and the paid plan as JSON (docs/NETWORKS.md). */
+  hires_amt: number;
+  plan: string | null;
   recipients: string;
   created_at: number;
   expires_at: number;
@@ -48,6 +52,8 @@ export interface QuoteInput {
   royaltyWallet?: string | null;
   /** For a call: the agent version this quote is for. */
   version?: number;
+  /** For a call to an agent that hires: the paid plan. Its slots add recipients; price.hires is their sum. */
+  network?: { plan: HirePlan; recipients: { role: PaymentRecipient['role']; address: string; amount: number }[]; ai: number; platform: number };
   ip: string;
   resource: string;
   description: string;
@@ -102,8 +108,11 @@ export class Payments {
         : [
             { role: 'maker', address: q.makerWallet, amount: q.price.maker },
             ...(q.price.royalty > 0 ? [{ role: 'royalty' as const, address: q.royaltyWallet, amount: q.price.royalty }] : []),
-            { role: 'ai', address: this.cfg.opsWallet, amount: q.price.ai },
-            { role: 'platform', address: this.cfg.burnWallet, amount: q.price.platform },
+            // The AI and platform parts of every hire slot go to the same two wallets as the top agent's.
+            { role: 'ai', address: this.cfg.opsWallet, amount: q.price.ai + (q.network?.ai ?? 0) },
+            { role: 'platform', address: this.cfg.burnWallet, amount: q.price.platform + (q.network?.platform ?? 0) },
+            // Each hired maker, and the original maker of a hired remix, paid for their slots in the same transaction.
+            ...(q.network?.recipients ?? []),
           ];
     const merged = new Map<string, PaymentRecipient>();
     for (const p of parts) {
@@ -114,6 +123,8 @@ export class Payments {
       else merged.set(p.address, { role: p.role, address: p.address, amount: String(p.amount) });
     }
     const out = [...merged.values()];
+    if (q.network && out.length > NETWORK_LIMITS.recipients) throw new PaymentError('too_many_recipients', `This job would pay ${out.length} wallets; one payment holds at most ${NETWORK_LIMITS.recipients}. Nothing was charged.`, 409);
+    if (q.kind === 'call' && out.reduce((n, r) => n + Number(r.amount), 0) !== q.price.total) throw new Error('the recipients do not add up to the price');
     await Promise.all(out.map(async (r) => (r.createAccount = !(await this.hasUsdcAccount(r.address)) || undefined)));
     return out;
   }
@@ -124,8 +135,8 @@ export class Payments {
     const now = Date.now();
     const total = recipients.reduce((n, r) => n + Number(r.amount), 0);
     this.db
-      .prepare('INSERT INTO quotes (nonce, kind, agent_id, maker, meta, input_hash, total, maker_amt, ai_amt, platform_amt, royalty_amt, version, recipients, ip, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(nonce, q.kind, q.agentId ?? null, q.maker ?? null, q.meta === undefined ? null : JSON.stringify(q.meta), q.inputHash ?? null, total, q.price.maker, q.price.ai, q.price.platform, q.price.royalty ?? 0, q.version ?? 0, JSON.stringify(recipients), q.ip, now, now + QUOTE_TTL_MS);
+      .prepare('INSERT INTO quotes (nonce, kind, agent_id, maker, meta, input_hash, total, maker_amt, ai_amt, platform_amt, royalty_amt, version, hires_amt, plan, recipients, ip, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(nonce, q.kind, q.agentId ?? null, q.maker ?? null, q.meta === undefined ? null : JSON.stringify(q.meta), q.inputHash ?? null, total, q.price.maker, q.price.ai, q.price.platform, q.price.royalty ?? 0, q.version ?? 0, q.network ? q.network.plan.total : 0, q.network ? JSON.stringify(q.network.plan) : null, JSON.stringify(recipients), q.ip, now, now + QUOTE_TTL_MS);
     const payTo = recipients.find((r) => r.role === 'maker' || r.role === 'build')?.address ?? recipients[0].address;
     return {
       scheme: 'split',

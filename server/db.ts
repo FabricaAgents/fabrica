@@ -104,7 +104,9 @@ CREATE TABLE IF NOT EXISTS quotes (
   claimed_sig TEXT UNIQUE,
   claimed_at INTEGER,
   royalty_amt INTEGER NOT NULL DEFAULT 0,
-  version INTEGER NOT NULL DEFAULT 0
+  version INTEGER NOT NULL DEFAULT 0,
+  hires_amt INTEGER NOT NULL DEFAULT 0,
+  plan TEXT
 );
 CREATE INDEX IF NOT EXISTS quotes_expiry ON quotes(expires_at);
 
@@ -133,10 +135,66 @@ CREATE TABLE IF NOT EXISTS receipts (
   created_at INTEGER NOT NULL,
   royalty_amt INTEGER NOT NULL DEFAULT 0,
   royalty_to TEXT,
-  version INTEGER NOT NULL DEFAULT 0
+  version INTEGER NOT NULL DEFAULT 0,
+  hires_amt INTEGER NOT NULL DEFAULT 0,
+  plan TEXT,
+  depth INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS receipts_agent ON receipts(agent_id, created_at);
 CREATE INDEX IF NOT EXISTS receipts_payer ON receipts(agent_id, payer);
+
+-- Agent networks: every hire slot a caller paid for, written with the top receipt. Rows are never changed afterwards.
+CREATE TABLE IF NOT EXISTS hire_slots (
+  root_id TEXT NOT NULL,
+  slot INTEGER NOT NULL,
+  parent_slot INTEGER NOT NULL,
+  depth INTEGER NOT NULL,
+  agent_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  payer TEXT NOT NULL,
+  maker_to TEXT NOT NULL,
+  maker_amt INTEGER NOT NULL,
+  royalty_to TEXT,
+  royalty_amt INTEGER NOT NULL DEFAULT 0,
+  ai_amt INTEGER NOT NULL,
+  platform_amt INTEGER NOT NULL,
+  hires_amt INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (root_id, slot)
+);
+CREATE INDEX IF NOT EXISTS hire_slots_agent ON hire_slots(agent_id, created_at);
+
+-- Every hired call that ran, with its own signed receipt, linked to the run that hired it.
+CREATE TABLE IF NOT EXISTS hires (
+  id TEXT PRIMARY KEY,
+  root_id TEXT NOT NULL,
+  parent_id TEXT NOT NULL,
+  slot INTEGER NOT NULL,
+  attempt INTEGER NOT NULL DEFAULT 1,
+  depth INTEGER NOT NULL,
+  agent_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  payer TEXT NOT NULL,
+  tx_sig TEXT NOT NULL,
+  total INTEGER NOT NULL,
+  maker_amt INTEGER NOT NULL,
+  royalty_amt INTEGER NOT NULL DEFAULT 0,
+  royalty_to TEXT,
+  ai_amt INTEGER NOT NULL,
+  platform_amt INTEGER NOT NULL,
+  hires_amt INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL,
+  input_hash TEXT NOT NULL,
+  output_hash TEXT,
+  output TEXT,
+  error TEXT,
+  ms INTEGER NOT NULL DEFAULT 0,
+  ai_cost INTEGER NOT NULL DEFAULT 0,
+  server_sig TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS hires_root ON hires(root_id);
+CREATE INDEX IF NOT EXISTS hires_agent ON hires(agent_id, created_at);
 
 CREATE TABLE IF NOT EXISTS ai_spend (
   day TEXT NOT NULL, scope TEXT NOT NULL, micros INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, scope)
@@ -224,6 +282,11 @@ const ADDED: [table: string, column: string, decl: string][] = [
   ['drafts', 'improve', 'TEXT'],
   ['quotes', 'version', 'INTEGER NOT NULL DEFAULT 0'],
   ['receipts', 'version', 'INTEGER NOT NULL DEFAULT 0'],
+  ['quotes', 'hires_amt', 'INTEGER NOT NULL DEFAULT 0'],
+  ['quotes', 'plan', 'TEXT'],
+  ['receipts', 'hires_amt', 'INTEGER NOT NULL DEFAULT 0'],
+  ['receipts', 'plan', 'TEXT'],
+  ['receipts', 'depth', 'INTEGER NOT NULL DEFAULT 0'],
 ];
 
 export function migrate(db: DB) {

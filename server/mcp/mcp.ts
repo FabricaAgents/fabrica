@@ -22,7 +22,7 @@ export async function handleMcp(e: Engine, msg: Rpc, ip: string, only?: string):
         protocolVersion: MCP_PROTOCOL,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'fabrica', version: '1.0.0' },
-        instructions: 'Each tool is a tested agent that is paid per call in USDC on Solana. Call a tool once without payment to get its x402 requirements, pay them with one transaction, then call again with the payment. Some agents are remixes of others: their payment has one more recipient, the original maker\'s royalty, inside the same transaction and the same price. Each tool carries the signed test report of its live version in _meta["fabrica/testReport"]; check it against the key at /api/receipts/key. A paid call runs the version it was quoted on.',
+        instructions: 'Each tool is a tested agent that is paid per call in USDC on Solana. Call a tool once without payment to get its x402 requirements, pay them with one transaction, then call again with the payment. Some agents are remixes of others: their payment has one more recipient, the original maker\'s royalty, inside the same transaction and the same price. Each tool carries the signed test report of its live version in _meta["fabrica/testReport"]; check it against the key at /api/receipts/key. A paid call runs the version it was quoted on. Some agents hire other agents during a run: their price already includes every call they may make, the payment has one more recipient per hired maker in the same transaction, a run can never spend more than its quote, and each hired call gets its own signed receipt in a tree (see _meta.receiptTree on the result).',
       });
     case 'notifications/initialized':
     case 'notifications/cancelled':
@@ -35,12 +35,12 @@ export async function handleMcp(e: Engine, msg: Rpc, ip: string, only?: string):
         tools: agents.map((a) => ({
           name: toolName(a.slug),
           title: a.name,
-          description: `${a.tagline} Price per call: ${(a.price.total / 1e6).toFixed(4)} USDC, paid with x402 on Solana. Tests passed: ${a.tests ? `${a.tests.passed}/${a.tests.total}` : 'none'}.${a.remixOf ? ` A remix of ${a.remixOf.name}, tested from scratch${a.price.royalty ? `; ${(a.price.royalty / 1e6).toFixed(4)} USDC of the price goes to its original maker as a royalty` : ''}.` : ''}${a.remixes.count ? ` Remixed ${a.remixes.count} time${a.remixes.count === 1 ? '' : 's'}.` : ''} Version ${a.version}${a.report ? ', with a signed test report' : ''}.`,
+          description: `${a.tagline} Price per call: ${(a.price.total / 1e6).toFixed(4)} USDC, paid with x402 on Solana. Tests passed: ${a.tests ? `${a.tests.passed}/${a.tests.total}` : 'none'}.${a.remixOf ? ` A remix of ${a.remixOf.name}, tested from scratch${a.price.royalty ? `; ${(a.price.royalty / 1e6).toFixed(4)} USDC of the price goes to its original maker as a royalty` : ''}.` : ''}${a.remixes.count ? ` Remixed ${a.remixes.count} time${a.remixes.count === 1 ? '' : 's'}.` : ''} Version ${a.version}${a.report ? ', with a signed test report' : ''}.${a.network ? ` Hires ${a.network.hires.map((h) => h.name).join(' and ')} during a run; the price includes up to ${a.network.slots} hired call${a.network.slots === 1 ? '' : 's'} (${(a.network.hiresTotal / 1e6).toFixed(4)} USDC, capped at ${(a.network.budget / 1e6).toFixed(4)}).` : ''}`,
           inputSchema: { ...toJsonSchema(a.input), properties: { ...(toJsonSchema(a.input).properties as object), payment: { type: 'string', description: 'The X-PAYMENT value for this call (base64). Leave out to get the price.' } } },
           outputSchema: toJsonSchema(a.output),
           annotations: { readOnlyHint: true, openWorldHint: a.tools.includes('web_fetch') },
           // The track record travels with the tool: the live version and its signed test report.
-          _meta: { 'fabrica/version': a.version, 'fabrica/testReport': a.report, 'fabrica/versions': `${e.cfg.siteUrl}/api/agents/${a.slug}/versions` },
+          _meta: { 'fabrica/version': a.version, 'fabrica/testReport': a.report, 'fabrica/versions': `${e.cfg.siteUrl}/api/agents/${a.slug}/versions`, ...(a.network ? { 'fabrica/network': { hires: a.network.hires.map((h) => ({ slug: h.slug, name: h.name, calls: h.calls })), budget: a.network.budget, hiresTotal: a.network.hiresTotal } } : {}) },
         })),
       });
     }
@@ -58,14 +58,14 @@ export async function handleMcp(e: Engine, msg: Rpc, ip: string, only?: string):
           isError: true,
           content: [{ type: 'text', text: `Payment required: ${(Number(body.accepts[0].maxAmountRequired) / 1e6).toFixed(4)} USDC. Pay the x402 requirements in structuredContent, then call again with the payment.` }],
           structuredContent: { x402Version: 1, accepts: body.accepts },
-          _meta: { 'x402/payment-required': body },
+          _meta: { 'x402/payment-required': body, ...(body.network ? { 'fabrica/network': body.network } : {}) },
         });
       }
       if (r.status !== 200) return ok(msg.id, { isError: true, content: [{ type: 'text', text: body.message ?? body.error ?? 'The call failed.' }], structuredContent: body });
       return ok(msg.id, {
         content: [{ type: 'text', text: JSON.stringify(body.output) }],
         structuredContent: body.output,
-        _meta: { 'x402/payment-response': r.headers?.['x-payment-response'] ?? null, receipt: body.receipt },
+        _meta: { 'x402/payment-response': r.headers?.['x-payment-response'] ?? null, receipt: body.receipt, ...(body.tree ? { receiptTree: body.tree } : {}) },
       });
     }
     default:

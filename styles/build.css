@@ -769,3 +769,65 @@
     gap: 8px;
   }
 }
+
+/* hiring other agents */
+
+.tool-ed--wide {
+  grid-column: 1 / -1;
+}
+
+.hire-ed {
+  display: grid;
+  gap: 12px;
+}
+
+.hire-ed__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.hire-ed__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 150px auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.hire-ed__row > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.hire-ed__row .mono {
+  font-size: 12px;
+}
+
+.hire-ed__add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.hire-ed__budget {
+  max-width: 420px;
+}
+
+@media (max-width: 700px) {
+  .hire-ed__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .hire-ed__row > .mono {
+    grid-column: 1;
+  }
+  .hire-ed__row .select {
+    grid-column: 1;
+  }
+}

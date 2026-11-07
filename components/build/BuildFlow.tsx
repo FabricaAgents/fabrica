@@ -10,6 +10,7 @@ import { api, ApiError } from '../../lib/api';
 import { payRequirements, PayError } from '../../lib/pay';
 import { currentWallet, loadSession, signIn, signOut, useWallet } from '../../lib/wallet';
 import { IconArrow, IconCheck, IconCross, IconWallet, ToolIcon, TOOL_LABEL } from '../Icons';
+import { NETWORK_LIMITS } from '../../shared/networks';
 import { RemixDiff } from './RemixDiff';
 import { REMIX_ROYALTY_BPS, royaltyOf } from '../../shared/remix';
 
@@ -27,6 +28,8 @@ interface Draft {
   agentSlug: string | null;
   error: string | null;
   price: PriceBreakdown | null;
+  /** For a draft that hires: what its hires add to the price, and anything that stops it. */
+  network: { hiresTotal: number; slots: number; budget: number; problems: string[] } | null;
   buildFee: number;
   remix: { parent: { slug: string; name: string; maker: string | null; example: boolean }; before: AgentSpec; summary: string | null; royaltyBps: number; feeFloor: number } | null;
   improve: { agent: { slug: string; name: string }; before: AgentSpec; summary: string | null; fromVersion: number; nextVersion: number; feeFloor: number } | null;
@@ -148,8 +151,106 @@ function FieldsEditor({ label, fields, onChange }: { label: string; fields: Fiel
   );
 }
 
-function SpecEditor({ spec, price, onSave, busy }: { spec: AgentSpec; price: PriceBreakdown | null; onSave: (s: AgentSpec) => void; busy: boolean }) {
+// ------------------------------------------------------------------ hiring other agents
+
+interface HireOption {
+  slug: string;
+  name: string;
+  tagline: string;
+  price: PriceBreakdown;
+  status: string;
+  example: boolean;
+}
+
+function HireEditor({ value, self, onChange, network }: { value: NonNullable<AgentSpec['tools']['hire_agent']>; self: string; onChange: (v: NonNullable<AgentSpec['tools']['hire_agent']>) => void; network: Draft['network'] }) {
+  const [options, setOptions] = useState<HireOption[] | null>(null);
+  const [pick, setPick] = useState('');
+  useEffect(() => {
+    api<{ agents: HireOption[] }>('/api/agents?sort=calls')
+      .then((r) => setOptions(r.body.agents.filter((a) => a.status === 'live' && !a.example && a.slug !== self)))
+      .catch(() => setOptions([]));
+  }, [self]);
+  const byslug = new Map((options ?? []).map((o) => [o.slug, o]));
+  const left = (options ?? []).filter((o) => !value.agents.some((h) => h.slug === o.slug));
+  const full = value.agents.length >= NETWORK_LIMITS.hiresPerAgent;
+  return (
+    <div className="hire-ed">
+      <p className="hint" style={{ margin: 0 }}>
+        Your agent can call these agents in the middle of a run. Every possible call is in the price your callers see before they pay, each hired maker is paid in the same transaction, and a run can never spend more than its quote.
+      </p>
+      {value.agents.length ? (
+        <ul className="hire-ed__list">
+          {value.agents.map((h, i) => {
+            const o = byslug.get(h.slug);
+            return (
+              <li key={h.slug} className="hire-ed__row">
+                <div>
+                  <b>{o?.name ?? h.slug}</b>
+                  <span className="mono muted">{h.slug}</span>
+                </div>
+                <span className="mono">{o ? `${usd(o.price.total)} a call` : 'not live'}</span>
+                <select className="select" aria-label={`Calls to ${h.slug} per run`} value={h.calls} onChange={(e) => onChange({ ...value, agents: value.agents.map((x, k) => (k === i ? { ...x, calls: Number(e.target.value) } : x)) })}>
+                  {Array.from({ length: NETWORK_LIMITS.callsPerHire }, (_, n) => (
+                    <option key={n} value={n + 1}>
+                      {n + 1} {n ? 'calls' : 'call'} per run
+                    </option>
+                  ))}
+                </select>
+                <button type="button" className="icon-btn" aria-label={`Stop hiring ${h.slug}`} onClick={() => onChange({ ...value, agents: value.agents.filter((_, k) => k !== i) })}>
+                  <IconCross />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      <div className="hire-ed__add">
+        <select className="select" aria-label="Agent to hire" value={pick} disabled={full || !left.length} onChange={(e) => setPick(e.target.value)}>
+          <option value="">{options === null ? 'Loading live agents' : full ? `At most ${NETWORK_LIMITS.hiresPerAgent} agents` : left.length ? 'Choose a live agent' : options.length ? 'All are on the list' : 'No other live agents yet'}</option>
+          {left.map((o) => (
+            <option key={o.slug} value={o.slug}>
+              {o.name}, {usd(o.price.total)} a call
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="btn btn--sm"
+          disabled={!pick || full}
+          onClick={() => {
+            onChange({ ...value, agents: [...value.agents, { slug: pick, calls: 1 }] });
+            setPick('');
+          }}
+        >
+          Hire it
+        </button>
+      </div>
+      <div className="field hire-ed__budget">
+        <label className="label" htmlFor="sp-hire-budget">
+          Most your agent may spend on hires per run, USDC
+        </label>
+        <input id="sp-hire-budget" className="input" inputMode="decimal" value={value.budget / 1e6} onChange={(e) => onChange({ ...value, budget: Math.round(Number(e.target.value) * 1e6) || 0 })} />
+        <span className="hint">If the agents you hire raise their prices above this, calls are refused before anyone pays.</span>
+      </div>
+      {network?.problems.length ? (
+        <div className="notice notice--fail">
+          {network.problems.map((p) => (
+            <div key={p}>{p.charAt(0).toUpperCase() + p.slice(1)}.</div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SpecEditor({ spec, price, network, onSave, busy }: { spec: AgentSpec; price: PriceBreakdown | null; network: Draft['network']; onSave: (s: AgentSpec) => void; busy: boolean }) {
   const [s, setS] = useState<AgentSpec>(spec);
+  const [networksOpen, setNetworksOpen] = useState(true);
+  useEffect(() => {
+    api<{ networksOpen: boolean }>('/api/config')
+      .then((r) => setNetworksOpen(r.body.networksOpen !== false))
+      .catch(() => {});
+  }, []);
   useEffect(() => setS(spec), [spec]);
   const set = (p: Partial<AgentSpec>) => setS((x) => ({ ...x, ...p }));
   const tools = s.tools;
@@ -159,6 +260,7 @@ function SpecEditor({ spec, price, onSave, busy }: { spec: AgentSpec; price: Pri
     else if (name === 'web_fetch') next.web_fetch = { allowDomains: [] };
     else if (name === 'code_run') next.code_run = { network: false, allowDomains: [], timeMs: 2000, memoryMb: 32 };
     else if (name === 'solana_read') next.solana_read = { methods: ['getAccountInfo', 'getBalance', 'getTokenSupply', 'getSignaturesForAddress', 'getTransaction'] };
+    else if (name === 'hire_agent') next.hire_agent = { agents: [], budget: 50_000 };
     else next.file_output = { formats: ['md'] };
     set({ tools: next });
   };
@@ -218,8 +320,8 @@ function SpecEditor({ spec, price, onSave, busy }: { spec: AgentSpec; price: Pri
       <div className="spec__section">
         <span className="label">Tools</span>
         <div className="tools-ed">
-          {(['web_fetch', 'code_run', 'solana_read', 'file_output'] as const).map((t) => (
-            <div key={t} className={`tool-ed ${tools[t] ? 'is-on' : ''}`}>
+          {(['web_fetch', 'code_run', 'solana_read', 'file_output', ...(networksOpen || tools.hire_agent ? (['hire_agent'] as const) : [])] as const).map((t) => (
+            <div key={t} className={`tool-ed ${tools[t] ? 'is-on' : ''} ${t === 'hire_agent' ? 'tool-ed--wide' : ''}`}>
               <label className="tool-ed__head">
                 <input type="checkbox" checked={Boolean(tools[t])} onChange={(e) => toggle(t, e.target.checked)} />
                 <ToolIcon tool={t} />
@@ -242,6 +344,8 @@ function SpecEditor({ spec, price, onSave, busy }: { spec: AgentSpec; price: Pri
               ) : null}
               {t === 'solana_read' && tools.solana_read ? <span className="hint">{tools.solana_read.methods.join(', ')}</span> : null}
               {t === 'file_output' && tools.file_output ? <span className="hint">Formats: {tools.file_output.formats.join(', ')}</span> : null}
+              {t === 'hire_agent' && !tools.hire_agent ? <span className="hint">Let it call other live Fabrica agents during a run, paid from the same price.</span> : null}
+              {t === 'hire_agent' && tools.hire_agent ? <HireEditor value={tools.hire_agent} self={s.slug} network={network} onChange={(v) => set({ tools: { ...tools, hire_agent: v } })} /> : null}
             </div>
           ))}
         </div>
@@ -276,7 +380,8 @@ function SpecEditor({ spec, price, onSave, busy }: { spec: AgentSpec; price: Pri
       <div className="spec__foot">
         {price ? (
           <span className="spec__price">
-            Buyers pay <b>{usd(price.total)}</b> per call: {usd(price.maker)} to you, {price.royalty ? `${usd(price.royalty)} royalty to the original maker, ` : ''}up to {usd(price.ai)} for AI, {usd(price.platform)} platform fee.
+            Buyers pay <b>{usd(price.total)}</b> per call: {usd(price.maker)} to you, {price.royalty ? `${usd(price.royalty)} royalty to the original maker, ` : ''}up to {usd(price.ai)} for AI, {usd(price.platform)} platform fee
+            {price.hires ? `, and ${usd(price.hires)} for up to ${network?.slots ?? 0} hired call${network?.slots === 1 ? '' : 's'}` : ''}.
           </span>
         ) : (
           <span />
@@ -653,6 +758,7 @@ export function BuildFlow({ initialSentence, initialDraft, buildFee, buildOpen, 
             <SpecEditor
               spec={d.spec}
               price={d.price}
+              network={d.network}
               busy={busy || d.status === 'running'}
               onSave={(spec) =>
                 step(async () => {

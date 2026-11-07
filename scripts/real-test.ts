@@ -5,7 +5,7 @@
 //   OPENROUTER_API_KEY=... npm run real-test -- --yes   (runs it)
 //
 // What it does: builds one new agent from a sentence with the real builder model (spec, tests), runs its full
-// suite on its real model with live web reads, and then re-tests the six example agents on real models, so the
+// suite on its real model with live web reads, and then re-tests the seven example agents on real models, so the
 // examples could later be published as real agents. It touches no wallet and moves no money on chain.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -21,6 +21,7 @@ import { FileStore } from '../server/tools/files';
 import { openMemoryDb } from '../server/db';
 import { normalizeSpec } from '../server/spec/schema';
 import { EXAMPLES } from '../fixtures/examples/index';
+import { testHandle } from '../server/networks';
 import { usd } from '../shared/format';
 
 const key = process.env.OPENROUTER_API_KEY;
@@ -37,9 +38,17 @@ await refreshPrices(MODELS, base).catch(() => 0);
 const builder = modelById(BUILDER_MODEL)!;
 const builderCall = (inTok: number, outTok: number) => Math.ceil(inTok * builder.inPerM + outTok * builder.outPerM);
 const newAgentCeiling = 2 * builderCall(4000, 3000) + 2 * builderCall(3000, 3500) + 14 * aiCeilingMicros(builder, 4, 900) + 6 * builderCall(2000, 200);
+// The examples as they are built: an example that hires (Invoice Check) hires the other examples in its tests.
+const exSpecs = new Map(EXAMPLES.map((fx) => normalizeSpec(fx.spec)).map((s) => [s.slug, s]));
+const find = (slug: string) => {
+  const s = exSpecs.get(slug);
+  return s ? { id: `x_${slug}`, slug, spec: s, version: 1, status: 'example', example: true, maker: null, royalty: { bps: 0, wallet: null } } : null;
+};
+const ceilingOf = (s: ReturnType<typeof normalizeSpec>) => aiCeilingMicros(modelById(s.model)!, s.limits.maxSteps, s.limits.maxOutputTokens);
 const exampleCeiling = EXAMPLES.reduce((n, fx) => {
   const s = normalizeSpec(fx.spec);
-  return n + (fx.tests.tests.length + 6) * aiCeilingMicros(modelById(s.model)!, s.limits.maxSteps, s.limits.maxOutputTokens) + 2 * builderCall(2000, 200);
+  const hires = (s.tools.hire_agent?.agents ?? []).reduce((k, h) => k + h.calls * (exSpecs.get(h.slug) ? ceilingOf(exSpecs.get(h.slug)!) : 0), 0);
+  return n + (fx.tests.tests.length + (s.tools.hire_agent ? 10 : 6)) * (ceilingOf(s) + hires) + 2 * builderCall(2000, 200);
 }, 0);
 console.log(`Plan
   1. Build one agent from: "${SENTENCE}"
@@ -52,15 +61,23 @@ if (!yes) {
   process.exit(0);
 }
 
-const provider = new OpenRouterProvider(key, base, 'https://getfabrica.fun');
+const provider = new OpenRouterProvider(key, base, 'https://fabrica.fun');
 const db = openMemoryDb();
-const files = new FileStore(db, fs.mkdtempSync(path.join(os.tmpdir(), 'fab-real-')), 'https://getfabrica.fun');
+const files = new FileStore(db, fs.mkdtempSync(path.join(os.tmpdir(), 'fab-real-')), 'https://fabrica.fun');
 const io = liveIO(new HttpRpc([process.env.HELIUS_API_KEY ? `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}` : 'https://api.mainnet-beta.solana.com']));
 let spent = 0;
 const report: Record<string, unknown> = {};
 
 const one = async (label: string, spec: ReturnType<typeof normalizeSpec>, tests: Awaited<ReturnType<typeof generateTests>>['tests']) => {
-  const results = await runSuite(spec, tests, { provider, io, files, ownerRef: label, onSpend: (m) => (spent += m), canSpend: () => spent < newAgentCeiling + exampleCeiling });
+  const results = await runSuite(spec, tests, {
+    provider,
+    io,
+    files,
+    ownerRef: label,
+    onSpend: (m) => (spent += m),
+    canSpend: () => spent < newAgentCeiling + exampleCeiling,
+    hires: (sp, t, spend) => testHandle(sp, t, { provider, io, files, ...spend, find, fees: { platformFeeBps: 1000, platformFeeMinMicros: 2000 }, tierOf: () => null, allowExamples: true }),
+  });
   const s = summarize(results);
   report[label] = { passed: `${s.passed}/${s.total}`, publishable: s.publishable, failed: results.filter((r) => !r.pass).map((r) => `${r.id}: ${r.error ?? r.checks.filter((c) => !c.pass).map((c) => c.detail).join('; ')}`) };
   console.log(label, JSON.stringify(report[label], null, 2));

@@ -2,6 +2,7 @@
 import type { Brain } from '../../server/ai/fake';
 import { brainFor, type ExampleFixture } from './kit';
 import { invoiceReader } from './invoice-reader';
+import { invoiceCheck } from './invoice-check';
 import { mintInspector } from './mint-inspector';
 import { pageDigest } from './page-digest';
 import { regexSmith } from './regex-smith';
@@ -9,7 +10,8 @@ import { releaseNotes } from './release-notes';
 import { tableAnalyst } from './table-analyst';
 import { VERSION_RECORDINGS } from '../recorded/versions';
 
-export const EXAMPLES: ExampleFixture[] = [mintInspector, tableAnalyst, regexSmith, invoiceReader, pageDigest, releaseNotes];
+// Invoice Check hires Invoice Reader and Table Analyst, so it is built after them.
+export const EXAMPLES: ExampleFixture[] = [mintInspector, tableAnalyst, regexSmith, invoiceReader, pageDigest, releaseNotes, invoiceCheck];
 
 const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[.!]$/, '');
 

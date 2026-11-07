@@ -13,6 +13,9 @@ import { loadRecording, replayIO } from '../tools/replay';
 import type { FileStore } from '../tools/files';
 import { behaviourHash } from '../drafts';
 import { EXAMPLES, exampleBrains } from '../../fixtures/examples/index';
+import { testHandle, type HireTarget } from '../networks';
+import type { FeeRules } from '../pay/price';
+import type { AgentSpec } from '../../shared/types';
 
 export function fixturesVersion(fixturesDir: string): string {
   const h = createHash('sha256');
@@ -34,7 +37,9 @@ export interface SeedReport {
   publishable: boolean;
 }
 
-export async function seedExamples(db: DB, files: FileStore | null, fixturesDir: string, log: (m: string) => void = () => {}, force = false): Promise<SeedReport[]> {
+const DEFAULT_FEES: FeeRules = { platformFeeBps: 1000, platformFeeMinMicros: 2000 };
+
+export async function seedExamples(db: DB, files: FileStore | null, fixturesDir: string, log: (m: string) => void = () => {}, force = false, fees: FeeRules = DEFAULT_FEES): Promise<SeedReport[]> {
   const version = fixturesVersion(fixturesDir);
   if (!force && kvGet(db, 'examples_version') === version && (db.prepare('SELECT COUNT(*) AS n FROM agents WHERE example = 1').get() as { n: number }).n === EXAMPLES.length) return [];
   const rec = loadRecording(fixturesDir);
@@ -42,11 +47,24 @@ export async function seedExamples(db: DB, files: FileStore | null, fixturesDir:
   const io = replayIO(rec);
   const reports: SeedReport[] = [];
   const built: { slug: string; spec: string; runId: string; run: any; results: string; hash: string; sentence: string }[] = [];
+  // An example that hires is tested against the examples built before it in this same pass, at their recorded spec.
+  const find = (slug: string): HireTarget | null => {
+    const b = built.find((x) => x.slug === slug);
+    return b ? { id: `x_${b.slug}`, slug: b.slug, spec: JSON.parse(b.spec) as AgentSpec, version: 1, status: 'example', example: true, maker: null, royalty: { bps: 0, wallet: null } } : null;
+  };
   for (const fx of EXAMPLES) {
     const { spec } = await generateSpec(provider, fx.sentence, `seed:${fx.slug}`);
     const { tests } = await generateTests(provider, spec, `seed:${fx.slug}`);
     const runId = `t_${randomBytes(9).toString('base64url')}`;
-    const results = await runSuite(spec, tests, { provider, io, files, ownerRef: `x:${runId}`, onSpend: () => {}, canSpend: () => true });
+    const results = await runSuite(spec, tests, {
+      provider,
+      io,
+      files,
+      ownerRef: `x:${runId}`,
+      onSpend: () => {},
+      canSpend: () => true,
+      hires: (sp, t, spend) => testHandle(sp, t, { provider, io, files, ...spend, find, fees, tierOf: () => null, allowExamples: true }),
+    });
     const s = summarize(results);
     reports.push({ slug: spec.slug, passed: s.passed, total: s.total, publishable: s.publishable });
     if (!s.publishable) log(`example ${spec.slug} did not pass its suite (${s.passed}/${s.total}); it is shown with its real results`);

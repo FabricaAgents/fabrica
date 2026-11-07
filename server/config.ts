@@ -43,6 +43,8 @@ export interface Config {
   remixOpen: boolean;
   /** VERSIONS=off refuses new versions and rollbacks. Live versions, changelogs and signed reports stay. */
   versionsOpen: boolean;
+  /** NETWORKS=off refuses new specs that hire and new quotes for agents that hire. Paid runs, receipts and trees stay. */
+  networksOpen: boolean;
 }
 
 const num = (v: string | undefined, d: number) => {
@@ -131,5 +133,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     fixturesDir: path.join(process.cwd(), 'fixtures'),
     remixOpen: (str(env.REMIX) ?? 'on').toLowerCase() !== 'off',
     versionsOpen: (str(env.VERSIONS) ?? 'on').toLowerCase() !== 'off',
+    networksOpen: (str(env.NETWORKS) ?? 'on').toLowerCase() !== 'off',
   };
 }

@@ -131,6 +131,32 @@ const sig5 = await conn.sendTransaction(t5, [payer]);
 results.royaltyLeftOut = await pay.settle(paymentHeader(q5, { signature: sig5 }), () => {}).then(() => 'accepted', (e) => e.code);
 results.quoteStillOpen = pay.quote(q5.extra.nonce)?.claimed_sig === null;
 
+// 6. An agent that hires (docs/NETWORKS.md): one payment pays the top maker, two hired makers, the royalty of a hired
+// remix, AI and platform, every one of them a fresh account created on the way: eight recipients in one transaction.
+const hiredA = Keypair.generate().publicKey.toBase58();
+const hiredB = Keypair.generate().publicKey.toBase58();
+const hiredOrig = Keypair.generate().publicKey.toBase58();
+const topMaker = Keypair.generate().publicKey.toBase58();
+const topOrig = Keypair.generate().publicKey.toBase58();
+const plan = { slots: [], skipped: [], total: 26_000, budget: 50_000 } as any;
+const netPrice = { total: 56_000, maker: 16_000, royalty: 4_000, ai: 8_000, platform: 2_000, hires: 26_000 };
+const network = { plan, ai: 9_000, platform: 4_000, recipients: [{ role: 'hire' as const, address: hiredA, amount: 4_000 }, { role: 'royalty' as const, address: hiredOrig, amount: 1_000 }, { role: 'hire' as const, address: hiredB, amount: 8_000 }] };
+const q6 = await pay.makeQuote({ kind: 'call', agentId: 'a3', inputHash: 'h', price: netPrice, makerWallet: topMaker, royaltyWallet: topOrig, network, ip: 'x', resource: 'r', description: 'd' });
+const t6 = buildPayment(q6, payer.publicKey, (await conn.getLatestBlockhash()).blockhash);
+t6.sign(payer);
+results.networkRecipients = q6.extra.recipients.length;
+results.networkTransactionBytes = t6.serialize().length;
+const before6 = { ops: await bal(ops), burn: await bal(burn) };
+await pay.settle(paymentHeader(q6, { transaction: t6.serialize().toString('base64') }), () => {});
+results.networkSplit = { top: String(await bal(topMaker)), topRoyalty: String(await bal(topOrig)), hiredA: String(await bal(hiredA)), hiredRoyalty: String(await bal(hiredOrig)), hiredB: String(await bal(hiredB)), ai: String((await bal(ops)) - before6.ops), platform: String((await bal(burn)) - before6.burn) };
+
+// 7. Sent without one hired maker: refused on the confirmed transaction, the quote stays open.
+const q7 = await pay.makeQuote({ kind: 'call', agentId: 'a3', inputHash: 'h', price: netPrice, makerWallet: topMaker, royaltyWallet: topOrig, network, ip: 'x', resource: 'r', description: 'd' });
+const t7 = buildPayment({ ...q7, extra: { ...q7.extra, recipients: q7.extra.recipients.filter((r) => r.address !== hiredB) } }, payer.publicKey, (await conn.getLatestBlockhash()).blockhash);
+const sig7 = await conn.sendTransaction(t7, [payer]);
+results.hiredMakerLeftOut = await pay.settle(paymentHeader(q7, { signature: sig7 }), () => {}).then(() => 'accepted', (e) => e.code);
+results.networkQuoteStillOpen = pay.quote(q7.extra.nonce)?.claimed_sig === null;
+
 const expect = {
   createAccountsRequested: true,
   transactionMode: { maker: '20000', ops: '8000', burn: '2000' },
@@ -140,7 +166,12 @@ const expect = {
   remixSplit: { maker: '16000', royalty: '4000', recipients: 'maker,royalty,ai,platform' },
   royaltyLeftOut: 'recipient',
   quoteStillOpen: true,
+  networkRecipients: 7,
+  networkSplit: { top: '16000', topRoyalty: '4000', hiredA: '4000', hiredRoyalty: '1000', hiredB: '8000', ai: '17000', platform: '6000' },
+  hiredMakerLeftOut: 'recipient',
+  networkQuoteStillOpen: true,
 };
+const ns = results.networkSplit as any;
 const rs = results.remixSplit as any;
 const ok =
   results.createAccountsRequested === true &&
@@ -154,7 +185,12 @@ const ok =
   rs.royalty === '4000' &&
   rs.recipients === 'maker,royalty,ai,platform' &&
   results.royaltyLeftOut === 'recipient' &&
-  results.quoteStillOpen === true;
+  results.quoteStillOpen === true &&
+  results.networkRecipients === 7 &&
+  (results.networkTransactionBytes as number) <= 1232 &&
+  JSON.stringify(ns) === JSON.stringify(expect.networkSplit) &&
+  results.hiredMakerLeftOut === 'recipient' &&
+  results.networkQuoteStillOpen === true;
 console.log(JSON.stringify({ results, expect, ok }, null, 2));
 stop();
 setTimeout(() => process.exit(ok ? 0 : 1), 500);

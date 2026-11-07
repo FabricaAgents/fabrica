@@ -2,6 +2,7 @@
 // a valid spec is, fills safe defaults and refuses the rest with a reason a person can act on.
 import { CATEGORIES, TOOL_NAMES, type AgentSpec, type FieldSpec, type FieldType, type FileFormat, type ToolConfig } from '../../shared/types';
 import { DEFAULT_MODEL, modelById } from '../../shared/models';
+import { NETWORK_LIMITS } from '../../shared/networks';
 
 export const SOLANA_METHODS = [
   'getBalance',
@@ -18,6 +19,7 @@ const FIELD_TYPES: FieldType[] = ['string', 'text', 'number', 'integer', 'boolea
 const FORMATS: FileFormat[] = ['md', 'csv', 'json', 'txt'];
 const NAME_RE = /^[a-z][a-z0-9_]{0,31}$/;
 const DOMAIN_RE = /^(?=.{3,253}$)(?!-)[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})+$/;
+export const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,59}$/;
 
 export const LIMITS = {
   makerFeeMin: 1_000,
@@ -106,6 +108,26 @@ function tools(raw: any, problems: string[]): ToolConfig {
   if (raw.file_output) {
     const f = (Array.isArray(raw.file_output.formats) ? raw.file_output.formats : ['md']).filter((x: string) => (FORMATS as string[]).includes(x));
     t.file_output = { formats: f.length ? f : ['md'] };
+  }
+  if (raw.hire_agent) {
+    // The hire list: which agents, how often, and the most the hires may cost per run. Whether each one exists and may
+    // be hired is checked against the live agents when the spec is saved and at publish (server/networks.ts).
+    const list = Array.isArray(raw.hire_agent.agents) ? raw.hire_agent.agents : [];
+    const agents: { slug: string; calls: number }[] = [];
+    for (const a of list) {
+      const slug = s(typeof a === 'string' ? a : a?.slug, 60).toLowerCase();
+      if (!SLUG_RE.test(slug)) {
+        problems.push(`"${slug || 'an empty name'}" is not an agent's slug`);
+        continue;
+      }
+      if (agents.some((x) => x.slug === slug)) continue;
+      agents.push({ slug, calls: clampInt(typeof a === 'string' ? 1 : a?.calls, 1, NETWORK_LIMITS.callsPerHire, 1) });
+    }
+    if (!agents.length) problems.push('hiring needs at least one agent to hire');
+    if (agents.length > NETWORK_LIMITS.hiresPerAgent) problems.push(`an agent can hire at most ${NETWORK_LIMITS.hiresPerAgent} other agents`);
+    const budget = Math.round(Number(raw.hire_agent.budget));
+    if (!Number.isFinite(budget) || budget < NETWORK_LIMITS.budgetMin || budget > NETWORK_LIMITS.budgetMax) problems.push(`the hire budget must be between ${NETWORK_LIMITS.budgetMin / 1e6} and ${NETWORK_LIMITS.budgetMax / 1e6} USDC per run`);
+    t.hire_agent = { agents: agents.slice(0, NETWORK_LIMITS.hiresPerAgent), budget: Math.min(NETWORK_LIMITS.budgetMax, Math.max(NETWORK_LIMITS.budgetMin, Number.isFinite(budget) ? budget : 0)) };
   }
   return t;
 }

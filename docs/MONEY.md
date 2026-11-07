@@ -7,7 +7,7 @@ file only claims what the code does. The code paths are named so each claim can 
 
 A paid call is one Solana transaction, signed by the caller, that pays every recipient directly from the
 caller's own USDC account: the maker, the AI cost, the platform fee and, when the agent is a remix, the original
-maker's royalty, each with a `TransferChecked` to the recipient's own USDC account, plus a memo that names the quote. There is no account in between, no program
+maker's royalty and, when the agent hires other agents, every hired maker (docs/NETWORKS.md), each with a `TransferChecked` to the recipient's own USDC account, plus a memo that names the quote. There is no account in between, no program
 that holds funds, no escrow, no deposit and no balance at Fabrica. Fabrica only reads the result on chain and
 then runs the agent. (`shared/pay.ts` builds the transaction; `server/pay/verify.ts` checks it;
 `server/pay/payments.ts` quotes and settles.)
@@ -70,6 +70,7 @@ real local validator with the real token, memo and associated-account programs (
 | Royalty | the original's maker wallet | only for a remix of an agent with a maker: 20% of the remix maker's part (`REMIX_ROYALTY_BPS`), rounded down to the micro-USDC. Out of the maker part, so the caller pays the same. |
 | AI | `FABRICA_OPS_WALLET` | the most this call may spend on AI: `steps x (8000 prompt tokens x input price + answer tokens x output price)`. The run is stopped there (`server/runtime/run.ts`). |
 | Platform fee | `FABRICA_BURN_WALLET` | a share of maker + AI with a floor (`FABRICA_PLATFORM_FEE_BPS`, `FABRICA_PLATFORM_FEE_MIN_USD`), lower for maker holder tiers. Buys back and burns $FABRICA. |
+| Hire slots | each hired maker, its royalty owner, `FABRICA_OPS_WALLET`, `FABRICA_BURN_WALLET` | only for an agent that hires: one slot per call it may make, each priced like a call to that agent (maker part, royalty, AI ceiling, platform fee), in the same transaction (docs/NETWORKS.md). |
 | Build round | `FABRICA_OPS_WALLET` | `FABRICA_BUILD_FEE_USD`, paid by the maker before any AI runs for the draft; covers the spec, the tests and up to three test runs. 90% of it is the draft's AI budget, enforced. |
 
 The site never shows the platform fee as a percentage; amounts are shown per call.
@@ -119,6 +120,32 @@ A version moves no money of its own and adds no recipient:
   `/api/receipts/key` returns all three formats and the test report format.
 - **Earnings, receipts and royalties stay with the agent** across versions: they hang off the agent, not the
   version. A rollback keeps the maker's current price; a remix's price floor holds for every version.
+
+## Agent networks (`server/networks.ts`, `server/calls.ts`, docs/NETWORKS.md)
+
+An agent may hire other agents during its run. The money still moves in the caller's one transaction:
+
+- **The plan is fixed at quote time.** For every agent on the hire list, a slot for each call it may make, down to
+  three levels, each with the hired agent's version, maker wallet, royalty owner and its price for one call. The plan
+  is stored with the quote (`quotes.plan`) and its hire part is `quotes.hires_amt`.
+- **One more recipient per hired maker** (role `hire`), and per hired remix's original maker (role `royalty`), in the
+  same transaction; the slots' AI and platform parts are added to the AI and platform recipients. Recipients with the
+  same wallet are merged, and a payment pays at most 8 wallets (1142 bytes when all 8 need a new account; checked in
+  the unit tests and on the validator). `total = maker + royalty + ai + platform + hires` holds for every quote, and the
+  recipients add up to it.
+- **Checked like every recipient.** A payment that leaves out or shortens a hired maker is refused before broadcast and
+  on the confirmed transaction, and the quote is not used up (`test/integration/networks.test.ts`,
+  `npm run test:validator`).
+- **A run can not spend more than its quote.** A hire can only use a slot of the paid plan; each hired call runs with
+  its own slot's AI ceiling as its AI budget. Nothing else can be spent.
+- **Refused before anyone pays:** hires that cost more than the maker's budget, loops, a fourth level, more than 6
+  hired calls, more than 8 wallets, a hired agent at its daily AI cap. Paused hires are left out of the plan.
+- **A slot the run does not use stays paid.** Fabrica never holds the money, so there is nothing to return, the same
+  as the unused part of an AI ceiling. The agent page shows how many paid slots its runs used.
+- **Records.** `hire_slots` has one row per paid slot (who was paid how much), written with the top receipt; `hires`
+  has one row per hired call that ran, with its own signed receipt. The top receipt signs the SHA-256 of the plan.
+- **Counting.** Being hired is not a paid call of the hired agent and does not feed its place on the leaderboard; its
+  page shows what hires earned its maker, leaving out runs paid by its own maker.
 
 ## No seed money, and the one honest exception
 
@@ -183,3 +210,6 @@ Pausing an agent stops new quotes. Calls already paid for still run.
 | Free builds or free trial calls | Someone would pre-fund the AI. |
 | Royalties held and paid out later, or batched | Custody of the royalty between payment and payout. It is paid in the call's own transaction instead. |
 | A royalty to every ancestor of a remix | One recipient per level would grow the transaction and shrink the newest maker's part with every level. The direct parent is paid; the lineage is shown. |
+| Paying hired agents when the hire happens | The caller would have to sign again mid-run, or someone would hold the caller's money to pay on their behalf. Every possible hire is paid up front instead. |
+| Returning an unused hire slot | The payment is final; returning money means holding it first. |
+| Hiring any live agent, not a list | The caller could not see who gets paid before paying. |

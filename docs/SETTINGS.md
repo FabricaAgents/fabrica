@@ -33,6 +33,7 @@ Every variable the server reads. Nothing is needed to run locally: `npm run dev`
 | `FABRICA_TEST_MODE` | empty | Pretend chain for tests. The server refuses to start with it on Railway. |
 | `REMIX` | `on` | `off` hides the Remix buttons and refuses new remixes. Live remixes keep running and paying royalties. See docs/REMIX.md. |
 | `VERSIONS` | `on` | `off` hides Improve and the rollback buttons and refuses new versions and rollbacks. Live versions, changelogs and signed reports stay. See docs/VERSIONS.md. |
+| `NETWORKS` | `on` | `off` hides the Hires agents tool, refuses specs that hire and new quotes for agents that hire. Paid runs, receipts and trees stay. See docs/NETWORKS.md. |
 
 `FABRICA_TIERS` example (amounts in whole tokens):
 

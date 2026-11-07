@@ -17,6 +17,7 @@ import type { ToolIO } from './tools';
 import type { FileStore } from './tools/files';
 import type { SpendLedger } from './safety/limits';
 import { runSummary, type TestRunRow } from './agents';
+import type { Networks } from './networks';
 
 export type DraftStatus = 'spec_pending' | 'spec' | 'tests_pending' | 'tests' | 'running' | 'tested' | 'published' | 'failed';
 
@@ -97,11 +98,18 @@ export interface DraftDeps {
   io: () => ToolIO;
   files: FileStore | null;
   ledger: SpendLedger;
+  /** Agent networks: why a spec's hire list can not be used, and a guard over the real hires for each test. */
+  networks?: Networks;
 }
 
 export class Drafts {
   private progress = new Map<string, { done: number; total: number; results: TestResult[] }>();
   constructor(private d: DraftDeps) {}
+
+  /** Set by the engine, which builds the network store after the drafts. */
+  set networks(n: Networks) {
+    this.d.networks = n;
+  }
 
   row(id: string): DraftRow | null {
     return (this.d.db.prepare('SELECT * FROM drafts WHERE id = ?').get(id) as DraftRow | undefined) ?? null;
@@ -282,6 +290,11 @@ export class Drafts {
       if (problems.length) throw new SpecError(problems);
       spec.slug = improve.before.slug;
     }
+    // A hire list must name live agents of makers, never the agent itself, and fit one payment and its budget.
+    if (spec.tools.hire_agent && this.d.networks) {
+      const problems = this.d.networks.problems(spec, { selfSlug: spec.slug, maker: r.maker, royaltyTo: remix && remix.royaltyBps ? remix.parent.maker : null });
+      if (problems.length) throw new SpecError(problems);
+    }
     // Tests written for the old input fields no longer fit after an input change; keep them only if they still validate.
     let tests = r.tests ? (JSON.parse(r.tests) as TestCase[]) : null;
     const old = r.spec ? (JSON.parse(r.spec) as AgentSpec) : null;
@@ -356,6 +369,7 @@ export class Drafts {
         ownerRef: runId,
         onSpend: (m) => this.spend(id, m),
         canSpend: (m) => this.room(id, m),
+        hires: this.d.networks ? (sp, t, spend) => this.d.networks!.testHandle(sp, t, { provider: this.d.provider(), io: this.d.io(), files: this.d.files, ...spend }) : undefined,
         onResult: (res, done) => {
           prog.done = done;
           prog.results.push(res);

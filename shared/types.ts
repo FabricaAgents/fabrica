@@ -1,7 +1,8 @@
 // The shapes shared by the server, the pages and the browser. Kept by hand; there is no codegen.
 import type { TestReport, VersionChange, VersionKind } from './versions';
+import type { HireAgentConfig, NetworkPublic } from './networks';
 
-export const TOOL_NAMES = ['web_fetch', 'code_run', 'solana_read', 'file_output'] as const;
+export const TOOL_NAMES = ['web_fetch', 'code_run', 'solana_read', 'file_output', 'hire_agent'] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 
 export const CATEGORIES = ['Onchain', 'Data', 'Code', 'Research', 'Writing', 'Ops'] as const;
@@ -23,6 +24,8 @@ export interface ToolConfig {
   code_run?: { network: boolean; allowDomains: string[]; timeMs: number; memoryMb: number };
   solana_read?: { methods: string[] };
   file_output?: { formats: FileFormat[] };
+  /** Other Fabrica agents this one may hire during a run, and the most the hires may cost per run (docs/NETWORKS.md). */
+  hire_agent?: HireAgentConfig;
 }
 
 export type FileFormat = 'md' | 'csv' | 'json' | 'txt';
@@ -56,6 +59,7 @@ export type CheckType =
   | 'regex_matches'
   | 'file_made'
   | 'no_leak'
+  | 'hire_rules'
   | 'judge';
 
 export interface Check {
@@ -88,6 +92,8 @@ export interface TestCase {
   enabled: boolean;
   /** Indirect injection: what a tool returns during this test instead of the real thing. */
   trap?: { tool: ToolName; content: string };
+  /** For agents that hire: agents treated as paused during this test. */
+  pausedHires?: string[];
 }
 
 export interface CheckResult {
@@ -201,6 +207,12 @@ export interface AgentPublic {
   versionCount: number;
   /** The live version's test results, signed by Fabrica, or null for an agent never tested. */
   report: TestReport | null;
+  /** For an agent that hires: its hire list, budget and what the hires cost today. Null when it hires nobody. */
+  network: NetworkPublic | null;
+  /** Live agents that have this one on their hire list. */
+  hiredBy: { slug: string; name: string }[];
+  /** What this agent's maker earned from slots other agents' callers paid for (calls by its own maker left out). */
+  hireEarnings: { slots: number; calls: number; makerMicros: number };
 }
 
 /** One version of an agent as the public changelog shows it. */
@@ -235,7 +247,7 @@ export interface RemixParent {
 }
 
 export interface PriceBreakdown {
-  /** All amounts in micro-USDC. total = maker + royalty + ai + platform. */
+  /** All amounts in micro-USDC. total = maker + royalty + ai + platform + hires. */
   total: number;
   /** What the agent's own maker receives. */
   maker: number;
@@ -243,6 +255,8 @@ export interface PriceBreakdown {
   royalty: number;
   ai: number;
   platform: number;
+  /** For an agent that hires: what the paid slots for its hires cost, all levels together. 0 or absent otherwise. */
+  hires?: number;
 }
 
 export interface Receipt {
@@ -265,11 +279,21 @@ export interface Receipt {
   createdAt: number;
   /** The version of the agent that ran this call, 0 for receipts from before versions were recorded. */
   version: number;
+  /** Receipt trees (v4): 1 for a call that hired or could hire, 2 or 3 for a hired call, 0 otherwise. */
+  depth?: number;
+  /** The receipt of the run that hired this call, for a hired call. */
+  parentId?: string | null;
+  /** The top receipt of the tree. */
+  rootId?: string | null;
+  /** The part of the total that paid for hire slots. */
+  hires?: number;
+  /** SHA-256 of the paid plan, on the top receipt of a tree. */
+  planHash?: string | null;
   serverSig: string;
 }
 
 export interface PaymentRecipient {
-  role: 'maker' | 'royalty' | 'ai' | 'platform' | 'build';
+  role: 'maker' | 'royalty' | 'ai' | 'platform' | 'build' | 'hire';
   address: string;
   amount: string;
   /** The recipient has no USDC account yet; the payer's transaction creates it. */
@@ -320,6 +344,8 @@ export interface SiteConfig {
   remixOpen: boolean;
   /** Whether makers can start new versions and roll back (VERSIONS=off closes both; changelogs and reports stay). */
   versionsOpen: boolean;
+  /** Whether agents may hire other agents (NETWORKS=off closes new network specs and quotes; receipts stay). */
+  networksOpen: boolean;
   payOpen: boolean;
   aiMode: 'openrouter' | 'fake' | 'offline';
   testMode: boolean;
